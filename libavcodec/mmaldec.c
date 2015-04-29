@@ -133,7 +133,7 @@ static int ffmmal_set_ref(AVFrame *frame, FFPoolRef *pool,
     avpriv_atomic_int_add_and_fetch(&ref->pool->refcount, 1);
     mmal_buffer_header_acquire(buffer);
 
-    frame->format = AV_PIX_FMT_MMAL;
+//    frame->format = AV_PIX_FMT_MMAL;
     frame->data[3] = (uint8_t *)ref->buffer;
     return 0;
 }
@@ -199,6 +199,10 @@ static void input_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
         if (entry->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END)
             avpriv_atomic_int_add_and_fetch(&ctx->packets_buffered, -1);
         av_free(entry);
+    } else {
+        char s[20];
+        av_get_codec_tag_string(s, sizeof(s), buffer->cmd);
+        av_log(avctx, AV_LOG_WARNING, "Unknown MMAL event %s on input port\n", s);
     }
     mmal_buffer_header_release(buffer);
 }
@@ -208,7 +212,14 @@ static void output_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
     AVCodecContext *avctx = (AVCodecContext*)port->userdata;
     MMALDecodeContext *ctx = avctx->priv_data;
 
-    mmal_queue_put(ctx->queue_decoded_frames, buffer);
+    if (!buffer->cmd) {
+        mmal_queue_put(ctx->queue_decoded_frames, buffer);
+    } else {
+        char s[20];
+        av_get_codec_tag_string(s, sizeof(s), buffer->cmd);
+        av_log(avctx, AV_LOG_WARNING, "Unknown MMAL event %s on output port\n", s);
+        mmal_buffer_header_release(buffer);
+    }
 }
 
 static void control_port_cb(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
@@ -286,8 +297,10 @@ static int ffmal_update_format(AVCodecContext *avctx)
     if ((status = mmal_port_parameter_set_boolean(decoder->output[0], MMAL_PARAMETER_VIDEO_INTERPOLATE_TIMESTAMPS, 0)))
         goto fail;
 
-    if (avctx->pix_fmt == AV_PIX_FMT_MMAL) {
+    if (avctx->pix_fmt == AV_PIX_FMT_MMAL || 1) {
         format_out->encoding = MMAL_ENCODING_OPAQUE;
+/*        status = mmal_port_parameter_set_boolean(decoder->output[0], MMAL_PARAMETER_ZERO_COPY, 1);
+        if(status != MMAL_SUCCESS) goto fail;*/
     } else {
         format_out->encoding_variant = format_out->encoding = MMAL_ENCODING_I420;
     }
@@ -323,6 +336,14 @@ fail:
     return ret < 0 ? ret : AVERROR_UNKNOWN;
 }
 
+extern VCOS_LOG_CAT_T mmal_log_category;
+
+static void ffvcos_vlog_default_impl(const VCOS_LOG_CAT_T *cat, VCOS_LOG_LEVEL_T level, const char *fmt, va_list args)
+{
+    av_vlog(NULL, level * 8, fmt, args);
+    av_log(NULL, level * 8, "\n");
+}
+
 static av_cold int ffmmal_init_decoder(AVCodecContext *avctx)
 {
     MMALDecodeContext *ctx = avctx->priv_data;
@@ -338,6 +359,10 @@ static av_cold int ffmmal_init_decoder(AVCodecContext *avctx)
         return AVERROR(ENOSYS);
     }
 
+//    vcos_set_vlog_impl(&ffvcos_vlog_default_impl);
+
+    mmal_log_category.level = VCOS_LOG_TRACE;
+
     if ((ret = ff_get_format(avctx, avctx->codec->pix_fmts)) < 0)
         return ret;
 
@@ -345,6 +370,8 @@ static av_cold int ffmmal_init_decoder(AVCodecContext *avctx)
 
     if ((status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_DECODER, &ctx->decoder)))
         goto fail;
+
+    mmal_log_category.level = VCOS_LOG_TRACE;
 
     decoder = ctx->decoder;
 
@@ -365,8 +392,8 @@ static av_cold int ffmmal_init_decoder(AVCodecContext *avctx)
     format_in->es->video.height = FFALIGN(avctx->height, 16);
     format_in->es->video.crop.width = avctx->width;
     format_in->es->video.crop.height = avctx->height;
-    format_in->es->video.frame_rate.num = 24000;
-    format_in->es->video.frame_rate.den = 1001;
+    format_in->es->video.frame_rate.num = avctx->time_base.den;
+    format_in->es->video.frame_rate.den = avctx->time_base.num * avctx->ticks_per_frame;
     format_in->es->video.par.num = avctx->sample_aspect_ratio.num;
     format_in->es->video.par.den = avctx->sample_aspect_ratio.den;
     format_in->flags = MMAL_ES_FORMAT_FLAG_FRAMED;
@@ -587,7 +614,7 @@ static int ffmal_copy_frame(AVCodecContext *avctx,  AVFrame *frame,
     MMALDecodeContext *ctx = avctx->priv_data;
     int ret = 0;
 
-    if (avctx->pix_fmt == AV_PIX_FMT_MMAL) {
+    if (avctx->pix_fmt == AV_PIX_FMT_MMAL || 1) {
         if (!ctx->pool_out)
             return AVERROR_UNKNOWN; // format change code failed with OOM previously
 
@@ -784,7 +811,7 @@ AVHWAccel ff_mpeg2_mmal_hwaccel = {
 };
 
 static const AVOption options[]={
-    {"extra_buffers", "extra buffers", offsetof(MMALDecodeContext, extra_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, 0},
+    {"extra_buffers", "extra buffers", offsetof(MMALDecodeContext, extra_buffers), AV_OPT_TYPE_INT, {.i64 = 10}, 0, 256, AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM},
     {NULL}
 };
 

@@ -189,7 +189,7 @@ void avcodec_register_all(void)
     REGISTER_ENCDEC (H263P,             h263p);
     REGISTER_DECODER(H264,              h264);
     REGISTER_DECODER(H264_CRYSTALHD,    h264_crystalhd);
-    REGISTER_DECODER(H264_MMAL,         h264_mmal);
+    REGISTER_ENCDEC (H264_MMAL,         h264_mmal);
     REGISTER_DECODER(H264_QSV,          h264_qsv);
     REGISTER_DECODER(H264_VDA,          h264_vda);
 #if FF_API_VDPAU
