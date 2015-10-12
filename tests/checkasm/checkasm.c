@@ -64,6 +64,7 @@ static const struct {
     const char *name;
     void (*func)(void);
 } tests[] = {
+    { "aes", checkasm_check_aes },
 #if CONFIG_AVCODEC
     #if CONFIG_ALAC_DECODER
         { "alacdsp", checkasm_check_alacdsp },

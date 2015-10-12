@@ -22,7 +22,7 @@ CHECKASMOBJS-$(CONFIG_AVFILTER) += $(AVFILTEROBJS-yes)
 
 -include $(SRC_PATH)/tests/checkasm/$(ARCH)/Makefile
 
-CHECKASMOBJS += $(CHECKASMOBJS-yes) checkasm.o
+CHECKASMOBJS += $(CHECKASMOBJS-yes) aes.o checkasm.o
 CHECKASMOBJS := $(sort $(CHECKASMOBJS:%=tests/checkasm/%))
 
 -include $(CHECKASMOBJS:.o=.d)
