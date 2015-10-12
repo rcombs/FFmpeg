@@ -32,6 +32,7 @@
 #include "libavutil/crc.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/timer.h"
+#include "libavutil/cpu.h"
 
 #ifndef AV_READ_TIME
 #define AV_READ_TIME(x) 0
@@ -65,6 +66,7 @@ struct hash_impl {
     const char *name;
     void (*run)(uint8_t *output, const uint8_t *input, unsigned size);
     const char *output;
+    int cpu_versions;
 };
 
 /***************************************************************************
@@ -343,6 +345,16 @@ static unsigned crc32(const uint8_t *data, unsigned size)
     return av_crc(av_crc_get_table(AV_CRC_32_IEEE), 0, data, size);
 }
 
+static const struct {
+    int flag;
+    const char *name;
+} cpu_flag_tab[] = {
+#if ARCH_X86
+    { AV_CPU_FLAG_AESNI,     "aesni"      },
+#endif
+    { 0 }
+};
+
 static void run_implementation(const uint8_t *input, uint8_t *output,
                                struct hash_impl *impl, unsigned size)
 {
@@ -352,6 +364,27 @@ static void run_implementation(const uint8_t *input, uint8_t *output,
     unsigned i, j, val;
     double mtime, ttime = 0, ttime2 = 0, stime;
     uint8_t outref[MAX_OUTPUT_SIZE];
+
+    if (!strcmp(impl->lib, "lavu")) {
+        char lib_name[32];
+        struct hash_impl impl2 = *impl;
+        int real_flags = av_get_cpu_flags();
+        int current_flags = real_flags;
+        impl2.cpu_versions = 0;
+        impl2.lib = lib_name;
+        for (i = 0; cpu_flag_tab[i].flag; i++) {
+            if (cpu_flag_tab[i].flag & impl->cpu_versions & real_flags) {
+                snprintf(lib_name, sizeof(lib_name), "lavu_%s", cpu_flag_tab[i].name);
+                run_implementation(input, output, &impl2, size);
+                current_flags &= ~cpu_flag_tab[i].flag;
+                av_force_cpu_flags(current_flags);
+            }
+        }
+        impl2.lib = "lavu_c";
+        run_implementation(input, output, &impl2, size);
+        av_force_cpu_flags(real_flags);
+        return;
+    }
 
     if (enabled_libs  && !av_stristr(enabled_libs,  impl->lib) ||
         enabled_algos && !av_stristr(enabled_algos, impl->name))
@@ -394,8 +427,8 @@ static void run_implementation(const uint8_t *input, uint8_t *output,
     fflush(stdout);
 }
 
-#define IMPL_USE(lib, name, symbol, output) \
-    { #lib, name, run_ ## lib ## _ ## symbol, output },
+#define IMPL_USE(lib, name, symbol, output, ...) \
+    { #lib, name, run_ ## lib ## _ ## symbol, output, __VA_ARGS__ },
 #define IMPL(lib, ...) IMPL_USE_ ## lib(lib, __VA_ARGS__)
 #define IMPL_ALL(...) \
     IMPL(lavu,       __VA_ARGS__) \
@@ -412,12 +445,12 @@ struct hash_impl implementations[] = {
     IMPL(lavu,     "RIPEMD-128", ripemd128, "9ab8bfba2ddccc5d99c9d4cdfb844a5f")
     IMPL(tomcrypt, "RIPEMD-128", ripemd128, "9ab8bfba2ddccc5d99c9d4cdfb844a5f")
     IMPL_ALL("RIPEMD-160", ripemd160, "62a5321e4fc8784903bb43ab7752c75f8b25af00")
-    IMPL_ALL("AES-128-ECB",aes128,    "crc:ff6bc888")
-    IMPL_ALL("AES-192-ECB",aes192,    "crc:1022815b")
-    IMPL_ALL("AES-256-ECB",aes256,    "crc:792e4e8a")
-    IMPL_ALL("AES-128-CBC",aes128cbc, "crc:0efebabe")
-    IMPL_ALL("AES-192-CBC",aes192cbc, "crc:ee2e34e8")
-    IMPL_ALL("AES-256-CBC",aes256cbc, "crc:0c9b875c")
+    IMPL_ALL("AES-128-ECB",aes128,    "crc:ff6bc888", AV_CPU_FLAG_AESNI)
+    IMPL_ALL("AES-192-ECB",aes192,    "crc:1022815b", AV_CPU_FLAG_AESNI)
+    IMPL_ALL("AES-256-ECB",aes256,    "crc:792e4e8a", AV_CPU_FLAG_AESNI)
+    IMPL_ALL("AES-128-CBC",aes128cbc, "crc:0efebabe", AV_CPU_FLAG_AESNI)
+    IMPL_ALL("AES-192-CBC",aes192cbc, "crc:ee2e34e8", AV_CPU_FLAG_AESNI)
+    IMPL_ALL("AES-256-CBC",aes256cbc, "crc:0c9b875c", AV_CPU_FLAG_AESNI)
     IMPL_ALL("CAMELLIA",   camellia,  "crc:7abb59a7")
     IMPL_ALL("CAST-128",   cast128,   "crc:456aa584")
     IMPL_ALL("BLOWFISH",   blowfish,  "crc:33e8aa74")
