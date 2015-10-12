@@ -1,4 +1,5 @@
-OBJS += x86/cpu.o                                                       \
+OBJS += x86/aes_init.o                                                  \
+        x86/cpu.o                                                       \
         x86/fixed_dsp_init.o                                            \
         x86/float_dsp_init.o                                            \
         x86/lls_init.o                                                  \
@@ -12,5 +13,6 @@ YASM-OBJS += x86/cpuid.o                                                \
              x86/fixed_dsp.o                                            \
              x86/float_dsp.o                                            \
              x86/lls.o                                                  \
+             x86/aes.o                                                  \
 
 YASM-OBJS-$(CONFIG_PIXELUTILS) += x86/pixelutils.o                      \
