@@ -52,6 +52,7 @@ static const char *enabled_algos;
 static unsigned specified_runs;
 
 static const uint8_t *hardcoded_key = "FFmpeg is the best program ever.";
+static const uint8_t hardcoded_iv[16] = {0};
 
 static void fatal_error(const char *tag)
 {
@@ -134,6 +135,39 @@ static void run_lavu_aes256(uint8_t *output, const uint8_t *input, unsigned size
         fatal_error("out of memory");
     av_aes_init(aes, hardcoded_key, 256, 0);
     av_aes_crypt(aes, output, input, size >> 4, NULL, 0);
+}
+
+static void run_lavu_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    static struct AVAES *aes;
+    static uint8_t *iv;
+    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+    av_aes_init(aes, hardcoded_key, 128, 0);
+    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
+}
+
+static void run_lavu_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    static struct AVAES *aes;
+    static uint8_t *iv;
+    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+    av_aes_init(aes, hardcoded_key, 192, 0);
+    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
+}
+
+static void run_lavu_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    static struct AVAES *aes;
+    static uint8_t *iv;
+    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+    av_aes_init(aes, hardcoded_key, 256, 0);
+    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
 }
 
 static void run_lavu_blowfish(uint8_t *output,
@@ -258,6 +292,42 @@ static void run_crypto_aes256(uint8_t *output, const uint8_t *input, unsigned si
         AES_encrypt(input + i, output + i, &aes);
 }
 
+static void run_crypto_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    AES_KEY aes;
+    static uint8_t *iv;
+    if ((!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+
+    AES_set_encrypt_key(hardcoded_key, 128, &aes);
+    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+}
+
+static void run_crypto_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    AES_KEY aes;
+    static uint8_t *iv;
+    if ((!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+
+    AES_set_encrypt_key(hardcoded_key, 192, &aes);
+    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+}
+
+static void run_crypto_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    AES_KEY aes;
+    static uint8_t *iv;
+    if ((!iv && !(iv = av_malloc(16))))
+        fatal_error("out of memory");
+    memcpy(iv, hardcoded_iv, 16);
+
+    AES_set_encrypt_key(hardcoded_key, 256, &aes);
+    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+}
+
 static void run_crypto_blowfish(uint8_t *output,
                                 const uint8_t *input, unsigned size)
 {
@@ -352,6 +422,39 @@ static void run_gcrypt_aes256(uint8_t *output, const uint8_t *input, unsigned si
     if (!aes)
         gcry_cipher_open(&aes, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0);
     gcry_cipher_setkey(aes, hardcoded_key, 32);
+    gcry_cipher_encrypt(aes, output, size, input, size);
+}
+
+static void run_gcrypt_aes128cbc(uint8_t *output,
+                              const uint8_t *input, unsigned size)
+{
+    static gcry_cipher_hd_t aes;
+    if (!aes)
+        gcry_cipher_open(&aes, GCRY_CIPHER_AES128, GCRY_CIPHER_MODE_CBC, 0);
+    gcry_cipher_setkey(aes, hardcoded_key, 16);
+    gcry_cipher_setiv(aes, hardcoded_iv, 16);
+    gcry_cipher_encrypt(aes, output, size, input, size);
+}
+
+static void run_gcrypt_aes192cbc(uint8_t *output,
+                              const uint8_t *input, unsigned size)
+{
+    static gcry_cipher_hd_t aes;
+    if (!aes)
+        gcry_cipher_open(&aes, GCRY_CIPHER_AES192, GCRY_CIPHER_MODE_CBC, 0);
+    gcry_cipher_setkey(aes, hardcoded_key, 24);
+    gcry_cipher_setiv(aes, hardcoded_iv, 16);
+    gcry_cipher_encrypt(aes, output, size, input, size);
+}
+
+static void run_gcrypt_aes256cbc(uint8_t *output,
+                              const uint8_t *input, unsigned size)
+{
+    static gcry_cipher_hd_t aes;
+    if (!aes)
+        gcry_cipher_open(&aes, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CBC, 0);
+    gcry_cipher_setkey(aes, hardcoded_key, 32);
+    gcry_cipher_setiv(aes, hardcoded_iv, 16);
     gcry_cipher_encrypt(aes, output, size, input, size);
 }
 
@@ -457,6 +560,30 @@ static void run_tomcrypt_aes256(uint8_t *output, const uint8_t *input, unsigned 
     size -= 15;
     for (i = 0; i < size; i += 16)
         aes_ecb_encrypt(input + i, output + i, &aes);
+}
+
+static void run_tomcrypt_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    symmetric_CBC aes;
+
+    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 16, 0, &aes);
+    cbc_encrypt(input, output, size, &aes);
+}
+
+static void run_tomcrypt_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    symmetric_CBC aes;
+
+    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 24, 0, &aes);
+    cbc_encrypt(input, output, size, &aes);
+}
+
+static void run_tomcrypt_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
+{
+    symmetric_CBC aes;
+
+    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 32, 0, &aes);
+    cbc_encrypt(input, output, size, &aes);
 }
 
 static void run_tomcrypt_blowfish(uint8_t *output,
@@ -600,9 +727,12 @@ struct hash_impl implementations[] = {
     IMPL(lavu,     "RIPEMD-128", ripemd128, "9ab8bfba2ddccc5d99c9d4cdfb844a5f")
     IMPL(tomcrypt, "RIPEMD-128", ripemd128, "9ab8bfba2ddccc5d99c9d4cdfb844a5f")
     IMPL_ALL("RIPEMD-160", ripemd160, "62a5321e4fc8784903bb43ab7752c75f8b25af00")
-    IMPL_ALL("AES-128",    aes128,    "crc:ff6bc888")
-    IMPL_ALL("AES-192",    aes192,    "crc:1022815b")
-    IMPL_ALL("AES-256",    aes256,    "crc:792e4e8a")
+    IMPL_ALL("AES-128-ECB",aes128,    "crc:ff6bc888")
+    IMPL_ALL("AES-192-ECB",aes192,    "crc:1022815b")
+    IMPL_ALL("AES-256-ECB",aes256,    "crc:792e4e8a")
+    IMPL_ALL("AES-128-CBC",aes128cbc, "crc:0efebabe")
+    IMPL_ALL("AES-192-CBC",aes192cbc, "crc:ee2e34e8")
+    IMPL_ALL("AES-256-CBC",aes256cbc, "crc:0c9b875c")
     IMPL_ALL("CAMELLIA",   camellia,  "crc:7abb59a7")
     IMPL_ALL("CAST-128",   cast128,   "crc:456aa584")
     IMPL_ALL("BLOWFISH",   blowfish,  "crc:33e8aa74")
@@ -621,6 +751,10 @@ int main(int argc, char **argv)
     uint8_t *output = input + MAX_INPUT_SIZE;
     unsigned i, impl, size;
     int opt;
+
+#if (USE_EXT_LIBS) & USE_tomcrypt
+    register_cipher(&aes_desc);
+#endif
 
     while ((opt = getopt(argc, argv, "hl:a:r:")) != -1) {
         switch (opt) {
