@@ -36,6 +36,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/base64.h"
 #include "libavutil/dict.h"
+#include "libavutil/dynarray.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/lzo.h"
@@ -80,6 +81,8 @@
 #define UNKNOWN_EQUIV         50 * 1024 /* An unknown element is considered equivalent
                                          * to this many bytes of unknown data for the
                                          * SKIP_THRESHOLD check. */
+
+#define AVSEEK_FLAG_MKV_RECURSIVE 128
 
 typedef enum {
     EBML_NONE,
@@ -140,6 +143,8 @@ typedef struct Ebml {
     char    *doctype;
     uint64_t doctype_version;
 } Ebml;
+
+extern const AVInputFormat ff_matroska_demuxer;
 
 typedef struct MatroskaTrackCompression {
     uint64_t algo;
@@ -287,10 +292,20 @@ typedef struct MatroskaChapter {
     uint64_t start;
     uint64_t end;
     uint64_t uid;
+    EbmlBin  segment_uid;
     char    *title;
 
     AVChapter *chapter;
+    int valid;
+    AVFormatContext *avf;
 } MatroskaChapter;
+
+typedef struct MatroskaEdition {
+    uint64_t uid;
+    uint64_t flag_default;
+    uint64_t flag_ordered;
+    EbmlList chapters;
+} MatroskaEdition;
 
 typedef struct MatroskaIndexPos {
     uint64_t track;
@@ -355,6 +370,13 @@ typedef struct MatroskaLevel1Element {
     int parsed;
 } MatroskaLevel1Element;
 
+typedef struct MatroskaSubSegment {
+    AVFormatContext *avf;
+    EbmlBin uid;
+    int used;
+    char *filename;
+} MatroskaSubSegment;
+
 typedef struct MatroskaDemuxContext {
     const AVClass *class;
     AVFormatContext *ctx;
@@ -366,6 +388,7 @@ typedef struct MatroskaDemuxContext {
     int64_t  resync_pos;
     int      unknown_count;
 
+    EbmlBin  segment_uid;
     uint64_t time_scale;
     double   duration;
     char    *title;
@@ -373,7 +396,7 @@ typedef struct MatroskaDemuxContext {
     EbmlBin  date_utc;
     EbmlList tracks;
     EbmlList attachments;
-    EbmlList chapters;
+    EbmlList editions;
     EbmlList index;
     EbmlList tags;
     EbmlList seekhead;
@@ -409,6 +432,20 @@ typedef struct MatroskaDemuxContext {
 
     /* Bandwidth value for WebM DASH Manifest */
     int bandwidth;
+
+    int external_linking;
+
+    char *segment_list_file;
+    MatroskaSubSegment *segments;
+    int nb_segments;
+
+    int edition_idx;
+    MatroskaEdition *cur_edition;
+    int chapter_idx;
+    MatroskaChapter *cur_chapter;
+    int ordered;
+    int64_t chapter_ts;
+    int64_t ts_offset;
 } MatroskaDemuxContext;
 
 #define CHILD_OF(parent) { .def = { .n = parent } }
@@ -420,7 +457,7 @@ typedef struct MatroskaDemuxContext {
 static EbmlSyntax ebml_syntax[3], matroska_segment[9], matroska_track_video_color[15], matroska_track_video[19],
                   matroska_track[32], matroska_track_encoding[6], matroska_track_encodings[2],
                   matroska_track_combine_planes[2], matroska_track_operation[2], matroska_tracks[2],
-                  matroska_attachments[2], matroska_chapter_entry[9], matroska_chapter[6], matroska_chapters[2],
+                  matroska_attachments[2], matroska_chapter_entry[11], matroska_edition[6], matroska_chapters[2],
                   matroska_index_entry[3], matroska_index[2], matroska_tag[3], matroska_tags[2], matroska_seekhead[2],
                   matroska_blockadditions[2], matroska_blockgroup[8], matroska_cluster_parsing[8];
 
@@ -448,7 +485,7 @@ static EbmlSyntax matroska_info[] = {
     { MATROSKA_ID_WRITINGAPP,    EBML_NONE },
     { MATROSKA_ID_MUXINGAPP,     EBML_UTF8, 0, 0, offsetof(MatroskaDemuxContext, muxingapp) },
     { MATROSKA_ID_DATEUTC,       EBML_BIN,  0, 0, offsetof(MatroskaDemuxContext, date_utc) },
-    { MATROSKA_ID_SEGMENTUID,    EBML_NONE },
+    { MATROSKA_ID_SEGMENTUID,    EBML_BIN,  0, 0, offsetof(MatroskaDemuxContext, segment_uid) },
     CHILD_OF(matroska_segment)
 };
 
@@ -637,22 +674,24 @@ static EbmlSyntax matroska_chapter_entry[] = {
     { MATROSKA_ID_CHAPTERDISPLAY,     EBML_NEST, 0, 0,                        0,         { .n = matroska_chapter_display } },
     { MATROSKA_ID_CHAPTERFLAGHIDDEN,  EBML_NONE },
     { MATROSKA_ID_CHAPTERFLAGENABLED, EBML_NONE },
+    { MATROSKA_ID_CHAPTERSEGMENTUID,  EBML_BIN,  0, offsetof(MatroskaChapter, segment_uid) },
+    { MATROSKA_ID_CHAPTERSEGMENTEDITIONUID, EBML_UINT },
     { MATROSKA_ID_CHAPTERPHYSEQUIV,   EBML_NONE },
     { MATROSKA_ID_CHAPTERATOM,        EBML_NONE },
-    CHILD_OF(matroska_chapter)
+    CHILD_OF(matroska_edition)
 };
 
-static EbmlSyntax matroska_chapter[] = {
-    { MATROSKA_ID_CHAPTERATOM,        EBML_NEST, 0, sizeof(MatroskaChapter), offsetof(MatroskaDemuxContext, chapters), { .n = matroska_chapter_entry } },
-    { MATROSKA_ID_EDITIONUID,         EBML_NONE },
+static EbmlSyntax matroska_edition[] = {
+    { MATROSKA_ID_CHAPTERATOM,        EBML_NEST, 0, sizeof(MatroskaChapter), offsetof(MatroskaEdition, chapters), { .n = matroska_chapter_entry } },
+    { MATROSKA_ID_EDITIONUID,         EBML_UINT, 0, 0, offsetof(MatroskaEdition, uid) },
     { MATROSKA_ID_EDITIONFLAGHIDDEN,  EBML_NONE },
-    { MATROSKA_ID_EDITIONFLAGDEFAULT, EBML_NONE },
-    { MATROSKA_ID_EDITIONFLAGORDERED, EBML_NONE },
+    { MATROSKA_ID_EDITIONFLAGDEFAULT, EBML_UINT, 0, 0, offsetof(MatroskaEdition, flag_default) },
+    { MATROSKA_ID_EDITIONFLAGORDERED, EBML_UINT, 0, 0, offsetof(MatroskaEdition, flag_ordered) },
     CHILD_OF(matroska_chapters)
 };
 
 static EbmlSyntax matroska_chapters[] = {
-    { MATROSKA_ID_EDITIONENTRY, EBML_NEST, 0, 0, 0, { .n = matroska_chapter } },
+    { MATROSKA_ID_EDITIONENTRY,        EBML_NEST, 0, sizeof(MatroskaEdition), offsetof(MatroskaDemuxContext, editions), { .n = matroska_edition } },
     CHILD_OF(matroska_segment)
 };
 
@@ -1804,7 +1843,7 @@ static void matroska_convert_tags(AVFormatContext *s)
 {
     MatroskaDemuxContext *matroska = s->priv_data;
     MatroskaTags *tags = matroska->tags.elem;
-    int i, j;
+    int i, j, k;
 
     for (i = 0; i < matroska->tags.nb_elem; i++) {
         if (tags[i].target.attachuid) {
@@ -1825,14 +1864,17 @@ static void matroska_convert_tags(AVFormatContext *s)
                        i, tags[i].target.attachuid);
             }
         } else if (tags[i].target.chapteruid) {
-            MatroskaChapter *chapter = matroska->chapters.elem;
+            MatroskaEdition *edition = matroska->editions.elem;
             int found = 0;
-            for (j = 0; j < matroska->chapters.nb_elem; j++) {
-                if (chapter[j].uid == tags[i].target.chapteruid &&
-                    chapter[j].chapter) {
-                    matroska_convert_tag(s, &tags[i].tag,
-                                         &chapter[j].chapter->metadata, NULL);
-                    found = 1;
+            for (j = 0; j < matroska->editions.nb_elem; j++) {
+                MatroskaChapter *chapter = edition[j].chapters.elem;
+                for (k = 0; k < edition[j].chapters.nb_elem; k++) {
+                    if (chapter[j].uid == tags[i].target.chapteruid &&
+                        chapter[j].chapter) {
+                        matroska_convert_tag(s, &tags[i].tag,
+                                             &chapter[j].chapter->metadata, NULL);
+                        found = 1;
+                    }
                 }
             }
             if (!found) {
@@ -2894,14 +2936,167 @@ static int matroska_parse_tracks(AVFormatContext *s)
     return 0;
 }
 
+static int match_uid(EbmlBin *a, EbmlBin *b)
+{
+    return a->size == 16 && b->size == 16 && !memcmp(a->data, b->data, 16);
+}
+
+static void free_segment(MatroskaSubSegment *segment)
+{
+    av_free(segment->uid.data);
+    av_free(segment->filename);
+    avformat_close_input(&segment->avf);
+    memset(segment, 0, sizeof(*segment));
+}
+
+static int open_potential_segment(AVFormatContext *s, MatroskaSubSegment *segment)
+{
+    MatroskaDemuxContext *submat;
+    int ret = 0;
+    AVFormatContext *avf = avformat_alloc_context();
+    AVDictionary *opts = NULL;
+    if (!avf)
+        return AVERROR(ENOMEM);
+
+    avf->interrupt_callback = s->interrupt_callback;
+
+    if ((ret = ff_copy_whiteblacklists(avf, s)) < 0)
+        goto fail;
+
+    if ((ret = av_dict_set(&opts, "external_linking", "0", 0)) < 0)
+        goto fail;
+
+    if ((ret = avformat_open_input(&avf, segment->filename, &ff_matroska_demuxer, &opts)) < 0) {
+        av_log(s, AV_LOG_VERBOSE, "Impossible to open '%s': %s\n", segment->filename, av_err2str(ret));
+        ret = 1;
+        goto fail;
+    }
+
+    submat = avf->priv_data;
+
+    if (submat->segment_uid.size != 16)
+        goto fail;
+
+    segment->avf = avf;
+    segment->used = 0;
+    segment->uid = submat->segment_uid;
+    if(!(segment->uid.data = av_memdup(segment->uid.data, segment->uid.size))) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    av_free(segment->filename);
+    avformat_close_input(&avf);
+    memset(segment, 0, sizeof(*segment));
+    return ret;
+}
+
+static int matroska_ext(const char* name)
+{
+    return 1;
+}
+
+static int find_segments(AVFormatContext *s)
+{
+    MatroskaDemuxContext *matroska = s->priv_data;
+    int ret = 0;
+
+    if (0) {
+
+    } else {
+        AVIODirContext *dir = NULL;
+        AVIODirEntry *entry = NULL;
+        const char *dirname;
+        char *path = av_strdup(s->url);
+        if (!path)
+            return AVERROR(ENOMEM);
+        dirname = av_dirname(path);
+        if ((ret = avio_open_dir(&dir, dirname, NULL)) < 0)
+            goto dir_fail;
+
+        while ((ret = avio_read_dir(dir, &entry)) >= 0 && entry) {
+            MatroskaSubSegment *segment = NULL;
+            char *filename = NULL;
+            if (entry->type != AVIO_ENTRY_FILE || !matroska_ext(entry->name))
+                goto dirent_fail;
+            filename = av_asprintf("%s/%s", dirname, entry->name);
+            if (!filename) {
+                ret = AVERROR(ENOMEM);
+                goto dirent_fail;
+            }
+            if (!strcmp(filename, s->url))
+                goto dirent_fail;
+
+            FF_DYNARRAY_ADD(INT_MAX, sizeof(*matroska->segments), matroska->segments,
+                            matroska->nb_segments, {
+                segment = &matroska->segments[matroska->nb_segments];
+            }, {
+                ret = AVERROR(ENOMEM);
+                goto dirent_fail;
+            });
+
+            if(!(segment->filename = av_strdup(filename))) {
+                ret = AVERROR(ENOMEM);
+                goto dirent_fail;
+            }
+
+            if ((ret = open_potential_segment(s, segment)) != 0)
+                matroska->nb_segments--;
+dirent_fail:
+            av_free(filename);
+            avio_free_directory_entry(&entry);
+            if (ret < 0)
+                break;
+        }
+dir_fail:
+        av_free(path);
+    }
+
+    return ret;
+}
+
+static int find_segment(AVFormatContext *s, MatroskaChapter *chapter)
+{
+    MatroskaDemuxContext *matroska = s->priv_data;
+    int ret = 0;
+
+    if (match_uid(&chapter->segment_uid, &matroska->segment_uid)) {
+        av_freep(&chapter->segment_uid.data);
+        chapter->segment_uid.size = 0;
+        return 1;
+    }
+
+    if (!matroska->nb_segments)
+        if ((ret = find_segments(s)) < 0)
+            return ret;
+
+    for (int i = 0; i < matroska->nb_segments; i++) {
+        MatroskaSubSegment *segment = &matroska->segments[i];
+        if (match_uid(&chapter->segment_uid, &segment->uid)) {
+            if (!segment->avf) {
+                if ((ret = open_potential_segment(s, segment)) < 0)
+                    return ret;
+                else if (ret)
+                    continue;
+            }
+            segment->used = 1;
+            chapter->avf = segment->avf;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int matroska_read_header(AVFormatContext *s)
 {
     MatroskaDemuxContext *matroska = s->priv_data;
     EbmlList *attachments_list = &matroska->attachments;
-    EbmlList *chapters_list    = &matroska->chapters;
     MatroskaAttachment *attachments;
-    MatroskaChapter *chapters;
-    uint64_t max_start = 0;
+    MatroskaEdition *editions;
     int64_t pos;
     Ebml ebml = { 0 };
     int i, j, res;
@@ -3022,17 +3217,62 @@ static int matroska_read_header(AVFormatContext *s)
         }
     }
 
-    chapters = chapters_list->elem;
-    for (i = 0; i < chapters_list->nb_elem; i++)
-        if (chapters[i].start != AV_NOPTS_VALUE && chapters[i].uid &&
-            (max_start == 0 || chapters[i].start > max_start)) {
-            chapters[i].chapter =
-                avpriv_new_chapter(s, chapters[i].uid,
+    editions = matroska->editions.elem;
+    for (i = 0; i < matroska->editions.nb_elem; i++) {
+        MatroskaEdition *edition = &editions[i];
+        int ordered = edition->flag_ordered;
+        uint64_t offset = 0;
+        uint64_t max_start = 0;
+        MatroskaChapter *chapters = edition->chapters.elem;
+        for (j = 0; j < edition->chapters.nb_elem; j++) {
+            MatroskaChapter *chapter = &chapters[j];
+            int64_t end;
+            if (chapter->start == AV_NOPTS_VALUE || chapter->end <= chapter->start ||
+                !chapter->uid ||
+                (!ordered && max_start != 0 && chapter->start > max_start))
+                continue;
+            if (ordered && chapter->segment_uid.size) {
+                if (!matroska->external_linking)
+                    continue;
+                res = find_segment(s, chapter);
+                if (res < 0)
+                    return res;
+                else if (!res)
+                    continue;
+            }
+            end = (ordered && chapter->end != AV_NOPTS_VALUE) ?
+                  offset + chapter->end - chapter->start :
+                  chapter->end;
+            chapter->chapter =
+                avpriv_new_chapter(s, chapter->uid,
                                    (AVRational) { 1, 1000000000 },
-                                   chapters[i].start, chapters[i].end,
-                                   chapters[i].title);
-            max_start = chapters[i].start;
+                                   ordered ? offset : chapter->start,
+                                   end,
+                                   chapter->title);
+            if (chapter->chapter) {
+                av_dict_set(&chapter->chapter->metadata,
+                            "title", chapter->title, 0);
+            }
+            chapter->valid = 1;
+            if (ordered)
+                offset = end;
+            else
+                max_start = chapter->start;
         }
+        if (ordered)
+            matroska->ctx->duration = av_rescale(offset, AV_TIME_BASE, 1000000000);
+        matroska->ordered = ordered;
+        matroska->cur_edition = edition;
+        if (edition->chapters.nb_elem)
+            matroska->cur_chapter = &chapters[0];
+        break; // FIXME: Multiple editions
+    }
+
+    for (i = 0; i < matroska->nb_segments; i++) {
+        MatroskaSubSegment *segment = &matroska->segments[i];
+        if (!segment->used)
+            free_segment(segment);
+    }
 
     matroska_add_index_entries(matroska);
 
@@ -3041,9 +3281,67 @@ static int matroska_read_header(AVFormatContext *s)
     return 0;
 }
 
+static int matroska_chapter_finished(MatroskaDemuxContext *matroska, AVPacket *pkt)
+{
+    if (matroska->ordered) {
+        AVStream *st = matroska->ctx->streams[pkt->stream_index];
+        if (!matroska->cur_chapter)
+            return 1;
+        return av_compare_ts(pkt->pts, st->time_base, matroska->cur_chapter->end,
+                             (AVRational) { 1, 1000000000 }) >= 0;
+    } else {
+        return 0;
+    }
+}
+
+static int advance_chapter(MatroskaDemuxContext *matroska)
+{
+    MatroskaChapter *chapters = matroska->cur_edition->chapters.elem;
+    matroska->chapter_ts += matroska->cur_chapter->end - matroska->cur_chapter->start;
+    do {
+        matroska->chapter_idx++;
+    } while (matroska->chapter_idx < matroska->cur_edition->chapters.nb_elem &&
+             !chapters[matroska->chapter_idx].valid);
+    if (matroska->chapter_idx == matroska->cur_edition->chapters.nb_elem) {
+        matroska->done = 1;
+        matroska->cur_chapter = NULL;
+    } else {
+        matroska->cur_chapter = &chapters[matroska->chapter_idx];
+        matroska->ts_offset = matroska->chapter_ts - matroska->cur_chapter->start;
+    }
+    return matroska->done;
+}
+
+static int execute_chapter_seek(MatroskaDemuxContext *matroska, int stream_index,
+                                int64_t timestamp, int flags)
+{
+    AVFormatContext *avf;
+    if (!matroska->ordered || !matroska->cur_chapter)
+        return 0;
+    avf = matroska->cur_chapter->avf ? matroska->cur_chapter->avf : matroska->ctx;
+    if (timestamp == AV_NOPTS_VALUE)
+        timestamp = matroska->chapter_ts;
+    if (stream_index >= 0) {
+        AVStream *st = avf->streams[stream_index];
+        timestamp -= av_rescale_q(matroska->ts_offset, (AVRational) { 1, 1000000000 },
+                                  st->time_base);
+    } else {
+        timestamp = av_rescale_q(timestamp - matroska->ts_offset, (AVRational) { 1, 1000000000 },
+                                 AV_TIME_BASE_Q);
+    }
+    return av_seek_frame(avf, stream_index, timestamp, flags | AVSEEK_FLAG_MKV_RECURSIVE);
+}
+
+static int is_external_chapter(MatroskaDemuxContext *matroska)
+{
+    if (!matroska->ordered || !matroska->cur_chapter)
+        return 0;
+    return matroska->cur_chapter->avf != NULL;
+}
+
 /*
  * Put one packet in an application-supplied AVPacket struct.
- * Returns 0 on success or -1 on failure.
+ * Returns 0 on success, 1 on recoverable failure, and <0 on error.
  */
 static int matroska_deliver_packet(MatroskaDemuxContext *matroska,
                                    AVPacket *pkt)
@@ -3051,6 +3349,20 @@ static int matroska_deliver_packet(MatroskaDemuxContext *matroska,
     if (matroska->queue) {
         MatroskaTrack *tracks = matroska->tracks.elem;
         MatroskaTrack *track;
+
+        if (matroska_chapter_finished(matroska, &matroska->queue->pkt)) {
+            int64_t end;
+            int external = is_external_chapter(matroska);
+            if (!matroska->cur_chapter)
+                return AVERROR_EOF;
+            end = matroska->cur_chapter->end;
+            if (advance_chapter(matroska))
+                return AVERROR_EOF;
+            if (external || is_external_chapter(matroska) || matroska->cur_chapter->start != end) {
+                execute_chapter_seek(matroska, -1, AV_NOPTS_VALUE, 0);
+                return 2;
+            }
+        }
 
         avpriv_packet_list_get(&matroska->queue, &matroska->queue_end, pkt);
         track = &tracks[pkt->stream_index];
@@ -3066,7 +3378,7 @@ static int matroska_deliver_packet(MatroskaDemuxContext *matroska,
         return 0;
     }
 
-    return -1;
+    return 1;
 }
 
 /*
@@ -3795,14 +4107,60 @@ static int matroska_read_packet(AVFormatContext *s, AVPacket *pkt)
         matroska->resync_pos = avio_tell(s->pb);
     }
 
-    while (matroska_deliver_packet(matroska, pkt)) {
-        if (matroska->done)
-            return (ret < 0) ? ret : AVERROR_EOF;
-        if (matroska_parse_cluster(matroska) < 0 && !matroska->done)
-            ret = matroska_resync(matroska, matroska->resync_pos);
+    do {
+        if (is_external_chapter(matroska)) {
+            if ((ret = av_read_frame(matroska->cur_chapter->avf, pkt)) < 0) {
+                if (ret != AVERROR_EOF)
+                    return ret;
+            }
+            if (matroska_chapter_finished(matroska, pkt) || ret == AVERROR_EOF) {
+                av_packet_unref(pkt);
+                if (advance_chapter(matroska))
+                    return AVERROR_EOF;
+                execute_chapter_seek(matroska, -1, AV_NOPTS_VALUE, 0);
+                ret = 2;
+            }
+        } else {
+            while ((ret = matroska_deliver_packet(matroska, pkt)) == 1) {
+                if (matroska->done)
+                    return (ret < 0) ? ret : AVERROR_EOF;
+                if (matroska_parse_cluster(matroska) < 0)
+                    matroska_resync(matroska, matroska->resync_pos);
+            }
+        }
+    } while (ret == 2);
+
+    if (!ret && matroska->ts_offset) {
+        AVStream *st = s->streams[pkt->stream_index];
+        int64_t delta = av_rescale_q(matroska->ts_offset, (AVRational) { 1, 1000000000 },
+                                     st->time_base);
+    if (pkt->pts != AV_NOPTS_VALUE)
+        pkt->pts += delta;
+    if (pkt->dts != AV_NOPTS_VALUE)
+        pkt->dts += delta;
     }
 
     return 0;
+}
+
+static int seek_chapter_timestamp(MatroskaDemuxContext *matroska, AVStream *st,
+                                  int64_t timestamp)
+{
+    MatroskaChapter *chapters = matroska->cur_edition->chapters.elem;
+    int64_t end = 0;
+    matroska->chapter_idx = 0;
+    matroska->chapter_ts = 0;
+    matroska->ts_offset = 0;
+    matroska->cur_chapter = &chapters[matroska->chapter_idx];
+    while (!matroska->done) {
+        int64_t duration = matroska->cur_chapter->end - matroska->cur_chapter->start;
+        end += duration;
+        if (av_compare_ts(timestamp, st->time_base, end,
+            (AVRational) { 1, 1000000000 }) < 0)
+            break;
+        advance_chapter(matroska);
+    }
+    return matroska->done;
 }
 
 static int matroska_read_seek(AVFormatContext *s, int stream_index,
@@ -3812,6 +4170,15 @@ static int matroska_read_seek(AVFormatContext *s, int stream_index,
     MatroskaTrack *tracks = NULL;
     AVStream *st = s->streams[stream_index];
     int i, index;
+
+    if (matroska->ordered && !(flags & AVSEEK_FLAG_MKV_RECURSIVE)) {
+        if (!seek_chapter_timestamp(matroska, st, timestamp) &&
+            is_external_chapter(matroska)) {
+            return execute_chapter_seek(matroska, stream_index, timestamp, flags);
+        }
+        timestamp -= av_rescale_q(matroska->ts_offset, (AVRational) { 1, 1000000000 },
+                                  st->time_base);
+    }
 
     /* Parse the CUES now since we need the index data to seek. */
     if (matroska->cues_parsing_deferred > 0) {
@@ -4282,7 +4649,15 @@ static int webm_dash_manifest_read_packet(AVFormatContext *s, AVPacket *pkt)
 static const AVOption options[] = {
     { "live", "flag indicating that the input is a live file that only has the headers.", OFFSET(is_live), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM },
     { "bandwidth", "bandwidth of this stream to be specified in the DASH manifest.", OFFSET(bandwidth), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, AV_OPT_FLAG_DECODING_PARAM },
+    { "external_linking", "whether or not to enable external segment linking", OFFSET(external_linking), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, AV_OPT_FLAG_DECODING_PARAM },
     { NULL },
+};
+
+static const AVClass matroska_class = {
+    .class_name = "Matroska demuxer",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 static const AVClass webm_dash_class = {
@@ -4303,7 +4678,8 @@ const AVInputFormat ff_matroska_demuxer = {
     .read_packet    = matroska_read_packet,
     .read_close     = matroska_read_close,
     .read_seek      = matroska_read_seek,
-    .mime_type      = "audio/webm,audio/x-matroska,video/webm,video/x-matroska"
+    .mime_type      = "audio/webm,audio/x-matroska,video/webm,video/x-matroska",
+    .priv_class     = &matroska_class,
 };
 
 const AVInputFormat ff_webm_dash_manifest_demuxer = {
