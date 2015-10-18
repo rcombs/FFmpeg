@@ -244,6 +244,7 @@ static void run_lavu_xtea(uint8_t *output,
 #include <openssl/camellia.h>
 #include <openssl/cast.h>
 #include <openssl/rc4.h>
+#include <openssl/evp.h>
 
 #define DEFINE_CRYPTO_WRAPPER(suffix, function)                              \
 static void run_crypto_ ## suffix(uint8_t *output,                           \
@@ -258,74 +259,82 @@ DEFINE_CRYPTO_WRAPPER(sha256,    SHA256)
 DEFINE_CRYPTO_WRAPPER(sha512,    SHA512)
 DEFINE_CRYPTO_WRAPPER(ripemd160, RIPEMD160)
 
-static void run_crypto_aes128(uint8_t *output,
-                              const uint8_t *input, unsigned size)
+static void run_crypto_aes128(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    unsigned i;
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 128, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        AES_encrypt(input + i, output + i, &aes);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_128_ecb(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_aes192(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    unsigned i;
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 192, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        AES_encrypt(input + i, output + i, &aes);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_192_ecb(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_aes256(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    unsigned i;
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 256, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        AES_encrypt(input + i, output + i, &aes);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_256_ecb(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    static uint8_t *iv;
-    if ((!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 128, &aes);
-    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_128_cbc(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    static uint8_t *iv;
-    if ((!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 192, &aes);
-    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_192_cbc(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
 {
-    AES_KEY aes;
-    static uint8_t *iv;
-    if ((!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
+    static EVP_CIPHER_CTX *ctx = NULL;
+    int len = 0;
 
-    AES_set_encrypt_key(hardcoded_key, 256, &aes);
-    AES_cbc_encrypt(input, output, size, &aes, iv, 1);
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
+        fatal_error("out of memory");
+
+    EVP_EncryptInit(ctx, EVP_aes_256_cbc(), hardcoded_key, hardcoded_iv);
+    EVP_EncryptUpdate(ctx, output, &len, input, size);
+    EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 static void run_crypto_blowfish(uint8_t *output,
