@@ -6,6 +6,7 @@ FATE_LAVF-$(call ENCDEC,  PCM_S16BE,             AU)                 += au
 FATE_LAVF-$(call ENCDEC2, MPEG4,      MP2,       AVI)                += avi
 FATE_LAVF-$(call ENCDEC,  BMP,                   IMAGE2)             += bmp
 FATE_LAVF-$(call ENCDEC,  PCM_S16BE,             CAF)                += caf
+FATE_LAVF-$(call ENCDEC2PRO, MPEG4,   MP2,       NUT, CRYPTO)        += crypto
 FATE_LAVF-$(call ENCDEC,  DPX,                   IMAGE2)             += dpx
 FATE_LAVF-$(call ENCDEC2, DVVIDEO,    PCM_S16LE, AVI)                += dv_fmt
 FATE_LAVF-$(call ENCDEC2, MPEG1VIDEO, MP2,       FFM)                += ffm

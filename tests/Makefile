@@ -82,6 +82,11 @@ ENCDEC2 = $(call ALLYES, $(firstword $(1))_ENCODER $(lastword $(1))_DECODER  \
                          $(firstword $(2))_ENCODER $(lastword $(2))_DECODER  \
                          $(firstword $(3))_MUXER   $(lastword $(3))_DEMUXER)
 
+ENCDEC2PRO = $(call ALLYES, $(firstword $(1))_ENCODER $(lastword $(1))_DECODER  \
+                            $(firstword $(2))_ENCODER $(lastword $(2))_DECODER  \
+                            $(firstword $(3))_MUXER   $(lastword $(3))_DEMUXER  \
+                            $(firstword $(4))_PROTOCOL)
+
 DEMDEC  = $(call ALLYES, $(1)_DEMUXER $(2:%=%_DECODER))
 ENCMUX  = $(call ALLYES, $(1:%=%_ENCODER) $(2)_MUXER)
 

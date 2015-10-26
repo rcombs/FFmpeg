@@ -168,6 +168,15 @@ if [ -n "$do_wtv" ] ; then
 do_lavf wtv "" "-acodec mp2 -threads 1"
 fi
 
+if [ -n "$do_crypto" ] ; then
+crypto_flags="-key 0123456789abcdef0011223344556677 -iv aabbccddeeff11335577999876542222"
+file=${outfile}lavf.crypto.nut
+f=${target_path}/$file
+run_avconv $DEC_OPTS -f image2 -vcodec pgmyuv -i $raw_src $DEC_OPTS -ar 44100 -f s16le -i $pcm_src $ENC_OPTS -b:a 64k -t 1 -qscale:v 10 -acodec mp2 -ab 64k -ar 44100 -threads 1 $crypto_flags crypto:$f
+do_md5sum $file
+echo $(wc -c $file)
+do_avconv_crc crypto $DEC_OPTS $crypto_flags -i crypto:$f
+fi
 
 # streamed images
 # mjpeg
