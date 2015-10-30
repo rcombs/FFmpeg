@@ -109,86 +109,32 @@ DEFINE_LAVU_MD(sha512,    AVSHA512, sha512, 512);
 DEFINE_LAVU_MD(ripemd128, AVRIPEMD, ripemd, 128);
 DEFINE_LAVU_MD(ripemd160, AVRIPEMD, ripemd, 160);
 
-static void run_lavu_aes128(uint8_t *output,
-                            const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    if (!aes && !(aes = av_aes_alloc()))
-        fatal_error("out of memory");
-    av_aes_init(aes, hardcoded_key, 128, 0);
-    av_aes_crypt(aes, output, input, size >> 4, NULL, 0);
+#define DEFINE_LAVU_CRYPT(suffix, type, namespace, ivsize, sshift, ...)      \
+static void run_lavu_ ## suffix(uint8_t *output,                             \
+                                const uint8_t *input, unsigned size)         \
+{                                                                            \
+    static struct type *h;                                                   \
+    static uint8_t *iv = NULL;                                               \
+    if (!h && !(h = av_ ## namespace ## _alloc()))                           \
+        fatal_error("out of memory");                                        \
+    if (ivsize && !iv && !(iv = av_malloc(ivsize)))                          \
+        fatal_error("out of memory");                                        \
+    if (ivsize)                                                              \
+        memcpy(iv, hardcoded_iv, ivsize);                                    \
+    av_ ## namespace ## _init(h, hardcoded_key, __VA_ARGS__);                \
+    av_ ## namespace ## _crypt(h, output, input, size >> sshift, iv, 0);     \
 }
 
-static void run_lavu_aes192(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    if (!aes && !(aes = av_aes_alloc()))
-        fatal_error("out of memory");
-    av_aes_init(aes, hardcoded_key, 192, 0);
-    av_aes_crypt(aes, output, input, size >> 4, NULL, 0);
-}
-
-static void run_lavu_aes256(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    if (!aes && !(aes = av_aes_alloc()))
-        fatal_error("out of memory");
-    av_aes_init(aes, hardcoded_key, 256, 0);
-    av_aes_crypt(aes, output, input, size >> 4, NULL, 0);
-}
-
-static void run_lavu_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    static uint8_t *iv;
-    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
-    av_aes_init(aes, hardcoded_key, 128, 0);
-    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
-}
-
-static void run_lavu_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    static uint8_t *iv;
-    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
-    av_aes_init(aes, hardcoded_key, 192, 0);
-    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
-}
-
-static void run_lavu_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static struct AVAES *aes;
-    static uint8_t *iv;
-    if ((!aes && !(aes = av_aes_alloc())) || (!iv && !(iv = av_malloc(16))))
-        fatal_error("out of memory");
-    memcpy(iv, hardcoded_iv, 16);
-    av_aes_init(aes, hardcoded_key, 256, 0);
-    av_aes_crypt(aes, output, input, size >> 4, iv, 0);
-}
-
-static void run_lavu_blowfish(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static struct AVBlowfish *blowfish;
-    if (!blowfish && !(blowfish = av_blowfish_alloc()))
-        fatal_error("out of memory");
-    av_blowfish_init(blowfish, hardcoded_key, 16);
-    av_blowfish_crypt(blowfish, output, input, size >> 3, NULL, 0);
-}
-
-static void run_lavu_camellia(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static struct AVCAMELLIA *camellia;
-    if (!camellia && !(camellia = av_camellia_alloc()))
-        fatal_error("out of memory");
-    av_camellia_init(camellia, hardcoded_key, 128);
-    av_camellia_crypt(camellia, output, input, size >> 4, NULL, 0);
-}
+DEFINE_LAVU_CRYPT(aes128,    AVAES,      aes,      0,  4, 128, 0);
+DEFINE_LAVU_CRYPT(aes192,    AVAES,      aes,      0,  4, 192, 0);
+DEFINE_LAVU_CRYPT(aes256,    AVAES,      aes,      0,  4, 256, 0);
+DEFINE_LAVU_CRYPT(aes128cbc, AVAES,      aes,      16, 4, 128, 0);
+DEFINE_LAVU_CRYPT(aes192cbc, AVAES,      aes,      16, 4, 192, 0);
+DEFINE_LAVU_CRYPT(aes256cbc, AVAES,      aes,      16, 4, 256, 0);
+DEFINE_LAVU_CRYPT(blowfish,  AVBlowfish, blowfish, 0,  3, 16);
+DEFINE_LAVU_CRYPT(camellia,  AVCAMELLIA, camellia, 0,  4, 128);
+DEFINE_LAVU_CRYPT(twofish,   AVTWOFISH,  twofish,  0,  4, 128);
+DEFINE_LAVU_CRYPT(rc4,       AVRC4,      rc4,      0,  0, 128, 0);
 
 static void run_lavu_cast128(uint8_t *output,
                              const uint8_t *input, unsigned size)
@@ -200,26 +146,6 @@ static void run_lavu_cast128(uint8_t *output,
     av_cast5_crypt(cast, output, input, size >> 3, 0);
 }
 
-static void run_lavu_twofish(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static struct AVTWOFISH *twofish;
-    if (!twofish && !(twofish = av_twofish_alloc()))
-        fatal_error("out of memory");
-    av_twofish_init(twofish, hardcoded_key, 128);
-    av_twofish_crypt(twofish, output, input, size >> 4, NULL, 0);
-}
-
-static void run_lavu_rc4(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static struct AVRC4 *rc4;
-    if (!rc4 && !(rc4 = av_rc4_alloc()))
-        fatal_error("out of memory");
-    av_rc4_init(rc4, hardcoded_key, 128, 0);
-    av_rc4_crypt(rc4, output, input, size, NULL, 0);
-}
-
 static void run_lavu_xtea(uint8_t *output,
                               const uint8_t *input, unsigned size)
 {
@@ -229,6 +155,7 @@ static void run_lavu_xtea(uint8_t *output,
     av_xtea_init(xtea, hardcoded_key);
     av_xtea_crypt(xtea, output, input, size >> 3, NULL, 0);
 }
+
 
 /***************************************************************************
  * crypto: OpenSSL's libcrypto
@@ -259,126 +186,29 @@ DEFINE_CRYPTO_WRAPPER(sha256,    SHA256)
 DEFINE_CRYPTO_WRAPPER(sha512,    SHA512)
 DEFINE_CRYPTO_WRAPPER(ripemd160, RIPEMD160)
 
-static void run_crypto_aes128(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_128_ecb(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
+#define DEFINE_CRYPTO_CRYPT(suffix, cipher)                                  \
+static void run_crypto_ ## suffix(uint8_t *output,                           \
+                                  const uint8_t *input, unsigned size)       \
+{                                                                            \
+    static EVP_CIPHER_CTX *ctx = NULL;                                       \
+    int len = 0;                                                             \
+    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))                               \
+        fatal_error("out of memory");                                        \
+    EVP_EncryptInit(ctx, cipher(), hardcoded_key, hardcoded_iv);             \
+    EVP_EncryptUpdate(ctx, output, &len, input, size);                       \
+    EVP_CIPHER_CTX_cleanup(ctx);                                             \
 }
 
-static void run_crypto_aes192(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_192_ecb(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
-}
-
-static void run_crypto_aes256(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_256_ecb(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
-}
-
-static void run_crypto_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_128_cbc(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
-}
-
-static void run_crypto_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_192_cbc(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
-}
-
-static void run_crypto_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static EVP_CIPHER_CTX *ctx = NULL;
-    int len = 0;
-
-    if (!ctx && !(ctx = EVP_CIPHER_CTX_new()))
-        fatal_error("out of memory");
-
-    EVP_EncryptInit(ctx, EVP_aes_256_cbc(), hardcoded_key, hardcoded_iv);
-    EVP_EncryptUpdate(ctx, output, &len, input, size);
-    EVP_CIPHER_CTX_cleanup(ctx);
-}
-
-static void run_crypto_blowfish(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    BF_KEY blowfish;
-    unsigned i;
-
-    BF_set_key(&blowfish, 16, hardcoded_key);
-    for (i = 0; i < size; i += 8)
-        BF_ecb_encrypt(input + i, output + i, &blowfish, 1);
-}
-
-static void run_crypto_camellia(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    CAMELLIA_KEY camellia;
-    unsigned i;
-
-    Camellia_set_key(hardcoded_key, 128, &camellia);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        Camellia_ecb_encrypt(input + i, output + i, &camellia, 1);
-}
-
-static void run_crypto_cast128(uint8_t *output,
-                               const uint8_t *input, unsigned size)
-{
-    CAST_KEY cast;
-    unsigned i;
-
-    CAST_set_key(&cast, 16, hardcoded_key);
-    for (i = 0; i < size; i += 8)
-        CAST_ecb_encrypt(input + i, output + i, &cast, 1);
-}
-
-static void run_crypto_rc4(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    RC4_KEY rc4;
-
-    RC4_set_key(&rc4, 16, hardcoded_key);
-    RC4(&rc4, size, input, output);
-}
+DEFINE_CRYPTO_CRYPT(aes128,    EVP_aes_128_ecb);
+DEFINE_CRYPTO_CRYPT(aes192,    EVP_aes_192_ecb);
+DEFINE_CRYPTO_CRYPT(aes256,    EVP_aes_256_ecb);
+DEFINE_CRYPTO_CRYPT(aes128cbc, EVP_aes_128_cbc);
+DEFINE_CRYPTO_CRYPT(aes192cbc, EVP_aes_192_cbc);
+DEFINE_CRYPTO_CRYPT(aes256cbc, EVP_aes_256_cbc);
+DEFINE_CRYPTO_CRYPT(blowfish,  EVP_bf_ecb);
+DEFINE_CRYPTO_CRYPT(camellia,  EVP_camellia_128_ecb);
+DEFINE_CRYPTO_CRYPT(cast128,   EVP_cast5_ecb);
+DEFINE_CRYPTO_CRYPT(rc4,       EVP_rc4);
 
 #define IMPL_USE_crypto(...) IMPL_USE(__VA_ARGS__)
 #else
@@ -406,106 +236,31 @@ DEFINE_GCRYPT_WRAPPER(sha256,    SHA256)
 DEFINE_GCRYPT_WRAPPER(sha512,    SHA512)
 DEFINE_GCRYPT_WRAPPER(ripemd160, RMD160)
 
-static void run_gcrypt_aes128(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES128, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 16);
-    gcry_cipher_encrypt(aes, output, size, input, size);
+#define DEFINE_GCRYPT_CRYPT(suffix, cipher, mode, ksize)                     \
+static void run_gcrypt_ ## suffix(uint8_t *output,                           \
+                                  const uint8_t *input, unsigned size)       \
+{                                                                            \
+    static gcry_cipher_hd_t ctx = NULL;                                      \
+    if (!ctx)                                                                \
+        gcry_cipher_open(&ctx, cipher, mode, 0);                             \
+    if (!ctx)                                                                \
+        fatal_error("out of memory");                                        \
+    if (mode == GCRY_CIPHER_MODE_CBC)                                        \
+        gcry_cipher_setiv(ctx, hardcoded_iv, 16);                            \
+    gcry_cipher_setkey(ctx, hardcoded_key, ksize);                           \
+    gcry_cipher_encrypt(ctx, output, size, input, size);                     \
 }
 
-static void run_gcrypt_aes192(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES192, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 24);
-    gcry_cipher_encrypt(aes, output, size, input, size);
-}
-
-static void run_gcrypt_aes256(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 32);
-    gcry_cipher_encrypt(aes, output, size, input, size);
-}
-
-static void run_gcrypt_aes128cbc(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES128, GCRY_CIPHER_MODE_CBC, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 16);
-    gcry_cipher_setiv(aes, hardcoded_iv, 16);
-    gcry_cipher_encrypt(aes, output, size, input, size);
-}
-
-static void run_gcrypt_aes192cbc(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES192, GCRY_CIPHER_MODE_CBC, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 24);
-    gcry_cipher_setiv(aes, hardcoded_iv, 16);
-    gcry_cipher_encrypt(aes, output, size, input, size);
-}
-
-static void run_gcrypt_aes256cbc(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t aes;
-    if (!aes)
-        gcry_cipher_open(&aes, GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CBC, 0);
-    gcry_cipher_setkey(aes, hardcoded_key, 32);
-    gcry_cipher_setiv(aes, hardcoded_iv, 16);
-    gcry_cipher_encrypt(aes, output, size, input, size);
-}
-
-static void run_gcrypt_blowfish(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t blowfish;
-    if (!blowfish)
-        gcry_cipher_open(&blowfish, GCRY_CIPHER_BLOWFISH, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(blowfish, hardcoded_key, 16);
-    gcry_cipher_encrypt(blowfish, output, size, input, size);
-}
-
-static void run_gcrypt_camellia(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t camellia;
-    if (!camellia)
-        gcry_cipher_open(&camellia, GCRY_CIPHER_CAMELLIA128, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(camellia, hardcoded_key, 16);
-    gcry_cipher_encrypt(camellia, output, size, input, size);
-}
-
-static void run_gcrypt_cast128(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t cast;
-    if (!cast)
-        gcry_cipher_open(&cast, GCRY_CIPHER_CAST5, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(cast, hardcoded_key, 16);
-    gcry_cipher_encrypt(cast, output, size, input, size);
-}
-
-static void run_gcrypt_twofish(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    static gcry_cipher_hd_t twofish;
-    if (!twofish)
-        gcry_cipher_open(&twofish, GCRY_CIPHER_TWOFISH128, GCRY_CIPHER_MODE_ECB, 0);
-    gcry_cipher_setkey(twofish, hardcoded_key, 16);
-    gcry_cipher_encrypt(twofish, output, size, input, size);
-}
+DEFINE_GCRYPT_CRYPT(aes128,    GCRY_CIPHER_AES128,      GCRY_CIPHER_MODE_ECB, 16);
+DEFINE_GCRYPT_CRYPT(aes192,    GCRY_CIPHER_AES192,      GCRY_CIPHER_MODE_ECB, 24);
+DEFINE_GCRYPT_CRYPT(aes256,    GCRY_CIPHER_AES256,      GCRY_CIPHER_MODE_ECB, 32);
+DEFINE_GCRYPT_CRYPT(aes128cbc, GCRY_CIPHER_AES128,      GCRY_CIPHER_MODE_CBC, 16);
+DEFINE_GCRYPT_CRYPT(aes192cbc, GCRY_CIPHER_AES192,      GCRY_CIPHER_MODE_CBC, 24);
+DEFINE_GCRYPT_CRYPT(aes256cbc, GCRY_CIPHER_AES256,      GCRY_CIPHER_MODE_CBC, 32);
+DEFINE_GCRYPT_CRYPT(blowfish,  GCRY_CIPHER_BLOWFISH,    GCRY_CIPHER_MODE_ECB, 16);
+DEFINE_GCRYPT_CRYPT(camellia,  GCRY_CIPHER_CAMELLIA128, GCRY_CIPHER_MODE_ECB, 16);
+DEFINE_GCRYPT_CRYPT(cast128,   GCRY_CIPHER_CAST5,       GCRY_CIPHER_MODE_ECB, 16);
+DEFINE_GCRYPT_CRYPT(twofish,   GCRY_CIPHER_TWOFISH128,  GCRY_CIPHER_MODE_ECB, 16);
 
 #define IMPL_USE_gcrypt(...) IMPL_USE(__VA_ARGS__)
 #else
@@ -537,120 +292,41 @@ DEFINE_TOMCRYPT_WRAPPER(sha512,    sha512, SHA512)
 DEFINE_TOMCRYPT_WRAPPER(ripemd128, rmd128, RIPEMD128)
 DEFINE_TOMCRYPT_WRAPPER(ripemd160, rmd160, RIPEMD160)
 
-static void run_tomcrypt_aes128(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    symmetric_key aes;
-    unsigned i;
-
-    aes_setup(hardcoded_key, 16, 0, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        aes_ecb_encrypt(input + i, output + i, &aes);
+#define DEFINE_TOMCRYPT_CRYPT(suffix, cipher, mode, modetype, ksize, ...)    \
+static void run_tomcrypt_ ## suffix(uint8_t *output,                         \
+                                    const uint8_t *input, unsigned size)     \
+{                                                                            \
+    symmetric_ ## modetype ctx;                                              \
+    int c = find_cipher(#cipher);                                            \
+    if (c == -1)                                                             \
+        fatal_error("cipher '" #cipher "' not found");                       \
+    mode ## _start(c, __VA_ARGS__, ksize, 0, &ctx);                          \
+    mode ## _encrypt(input, output, size, &ctx);                             \
 }
 
-static void run_tomcrypt_aes192(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    symmetric_key aes;
-    unsigned i;
+DEFINE_TOMCRYPT_CRYPT(aes128,    aes,      ecb, ECB, 16, hardcoded_key);
+DEFINE_TOMCRYPT_CRYPT(aes192,    aes,      ecb, ECB, 24, hardcoded_key);
+DEFINE_TOMCRYPT_CRYPT(aes256,    aes,      ecb, ECB, 32, hardcoded_key);
+DEFINE_TOMCRYPT_CRYPT(aes128cbc, aes,      cbc, CBC, 16, hardcoded_iv, hardcoded_key);
+DEFINE_TOMCRYPT_CRYPT(aes192cbc, aes,      cbc, CBC, 24, hardcoded_iv, hardcoded_key);
+DEFINE_TOMCRYPT_CRYPT(aes256cbc, aes,      cbc, CBC, 32, hardcoded_iv, hardcoded_key);
 
-    aes_setup(hardcoded_key, 24, 0, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        aes_ecb_encrypt(input + i, output + i, &aes);
+#define DEFINE_TOMCRYPT_CRYPT2(suffix, cipher, ksize, bsize)                 \
+static void run_tomcrypt_ ## suffix(uint8_t *output,                         \
+                                    const uint8_t *input, unsigned size)     \
+{                                                                            \
+    symmetric_key ctx;                                                       \
+    unsigned i;                                                              \
+    cipher ## _setup(hardcoded_key, ksize, 0, &ctx);                         \
+    for (i = 0; i < size; i += bsize)                                        \
+        cipher ## _ecb_encrypt(input + i, output + i, &ctx);                 \
 }
 
-static void run_tomcrypt_aes256(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    symmetric_key aes;
-    unsigned i;
-
-    aes_setup(hardcoded_key, 32, 0, &aes);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        aes_ecb_encrypt(input + i, output + i, &aes);
-}
-
-static void run_tomcrypt_aes128cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    symmetric_CBC aes;
-
-    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 16, 0, &aes);
-    cbc_encrypt(input, output, size, &aes);
-}
-
-static void run_tomcrypt_aes192cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    symmetric_CBC aes;
-
-    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 24, 0, &aes);
-    cbc_encrypt(input, output, size, &aes);
-}
-
-static void run_tomcrypt_aes256cbc(uint8_t *output, const uint8_t *input, unsigned size)
-{
-    symmetric_CBC aes;
-
-    cbc_start(find_cipher("aes"), hardcoded_iv, hardcoded_key, 32, 0, &aes);
-    cbc_encrypt(input, output, size, &aes);
-}
-
-static void run_tomcrypt_blowfish(uint8_t *output,
-                                  const uint8_t *input, unsigned size)
-{
-    symmetric_key blowfish;
-    unsigned i;
-
-    blowfish_setup(hardcoded_key, 16, 0, &blowfish);
-    for (i = 0; i < size; i += 8)
-        blowfish_ecb_encrypt(input + i, output + i, &blowfish);
-}
-
-static void run_tomcrypt_camellia(uint8_t *output,
-                                  const uint8_t *input, unsigned size)
-{
-    symmetric_key camellia;
-    unsigned i;
-
-    camellia_setup(hardcoded_key, 16, 0, &camellia);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        camellia_ecb_encrypt(input + i, output + i, &camellia);
-}
-
-static void run_tomcrypt_cast128(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    symmetric_key cast;
-    unsigned i;
-
-    cast5_setup(hardcoded_key, 16, 0, &cast);
-    for (i = 0; i < size; i += 8)
-        cast5_ecb_encrypt(input + i, output + i, &cast);
-}
-
-static void run_tomcrypt_twofish(uint8_t *output,
-                                const uint8_t *input, unsigned size)
-{
-    symmetric_key twofish;
-    unsigned i;
-
-    twofish_setup(hardcoded_key, 16, 0, &twofish);
-    size -= 15;
-    for (i = 0; i < size; i += 16)
-        twofish_ecb_encrypt(input + i, output + i, &twofish);
-}
-
-static void run_tomcrypt_xtea(uint8_t *output,
-                              const uint8_t *input, unsigned size)
-{
-    symmetric_key xtea;
-    unsigned i;
-
-    xtea_setup(hardcoded_key, 16, 0, &xtea);
-    for (i = 0; i < size; i += 8)
-        xtea_ecb_encrypt(input + i, output + i, &xtea);
-}
+DEFINE_TOMCRYPT_CRYPT2(blowfish, blowfish, 16, 8);
+DEFINE_TOMCRYPT_CRYPT2(camellia, camellia, 16, 16);
+DEFINE_TOMCRYPT_CRYPT2(cast128,  cast5,    16, 8);
+DEFINE_TOMCRYPT_CRYPT2(twofish,  twofish,  16, 16);
+DEFINE_TOMCRYPT_CRYPT2(xtea,     xtea,     16, 8);
 
 
 #define IMPL_USE_tomcrypt(...) IMPL_USE(__VA_ARGS__)
