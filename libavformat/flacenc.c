@@ -21,10 +21,13 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "libavcodec/flac.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "flacenc.h"
+#include "id3v2.h"
+#include "internal.h"
 #include "vorbiscomment.h"
 #include "libavcodec/bytestream.h"
 
@@ -33,8 +36,16 @@ typedef struct FlacMuxerContext {
     const AVClass *class;
     int write_header;
 
+    int audio_stream_idx;
+    AVPacket *pics;
+    int nb_pics, waiting_pics;
+    /* audio packets are queued here until we get all the attached pictures */
+    AVPacketList *queue, *queue_end;
+
     /* updated streaminfo sent by the encoder at the end */
     uint8_t *streaminfo;
+
+    unsigned attached_types;
 } FlacMuxerContext;
 
 static int flac_write_block_padding(AVIOContext *pb, unsigned int n_padding_bytes,
@@ -74,30 +85,156 @@ static int flac_write_block_comment(AVIOContext *pb, AVDictionary **m,
     return 0;
 }
 
-static int flac_write_header(struct AVFormatContext *s)
+static int flac_write_picture(struct AVFormatContext *s, AVPacket *pkt)
 {
-    int ret;
-    int padding = s->metadata_header_padding;
-    AVCodecParameters *par = s->streams[0]->codecpar;
-    FlacMuxerContext *c   = s->priv_data;
+    FlacMuxerContext *c = s->priv_data;
+    AVIOContext *pb = s->pb;
+    const AVPixFmtDescriptor *pixdesc;
+    const CodecMime *mime = ff_id3v2_mime_tags;
+    AVDictionaryEntry *e;
+    const char *mimetype = NULL, *desc = "";
+    const AVStream *st = s->streams[pkt->stream_index];
+    int i, mimelen, desclen, type = 0;
 
-    if (!c->write_header)
+    if (!pkt->data)
         return 0;
 
-    if (s->nb_streams > 1) {
-        av_log(s, AV_LOG_ERROR, "only one stream is supported\n");
+    while (mime->id != AV_CODEC_ID_NONE) {
+        if (mime->id == st->codecpar->codec_id) {
+            mimetype = mime->str;
+            break;
+        }
+        mime++;
+    }
+    if (!mimetype) {
+        av_log(s, AV_LOG_ERROR, "No mimetype is known for stream %d, cannot "
+               "write an attached picture.\n", st->index);
         return AVERROR(EINVAL);
     }
-    if (par->codec_id != AV_CODEC_ID_FLAC) {
-        av_log(s, AV_LOG_ERROR, "unsupported codec\n");
+    mimelen = strlen(mimetype);
+
+    /* get the picture type */
+    e = av_dict_get(st->metadata, "comment", NULL, 0);
+    for (i = 0; e && i < FF_ARRAY_ELEMS(ff_id3v2_picture_types); i++) {
+        if (!av_strcasecmp(e->value, ff_id3v2_picture_types[i])) {
+            type = i;
+            break;
+        }
+    }
+
+    if ((c->attached_types & (1 << type)) & 0x6) {
+        av_log(s, AV_LOG_ERROR, "Duplicate attachment for type '%s'\n", ff_id3v2_picture_types[type]);
         return AVERROR(EINVAL);
     }
 
+    if (type == 1 && (st->codecpar->codec_id != AV_CODEC_ID_PNG ||
+                      st->codecpar->width != 32 ||
+                      st->codecpar->height != 32)) {
+        av_log(s, AV_LOG_ERROR, "File icon attachment must be a 32x32 PNG");
+        return AVERROR(EINVAL);
+    }
+
+    c->attached_types |= (1 << type);
+
+    /* get the description */
+    if ((e = av_dict_get(st->metadata, "title", NULL, 0)))
+        desc = e->value;
+    desclen = strlen(desc);
+
+    avio_w8(pb, 0x06);
+    avio_wb24(pb, 4 + 4 + mimelen + 4 + desclen + 4 + 4 + 4 + 4 + 4 + pkt->size);
+
+    avio_wb32(pb, type);
+
+    avio_wb32(pb, mimelen);
+    avio_write(pb, mimetype, mimelen);
+
+    avio_wb32(pb, desclen);
+    avio_write(pb, desc, desclen);
+
+    avio_wb32(pb, st->codecpar->width);
+    avio_wb32(pb, st->codecpar->height);
+    if ((pixdesc = av_pix_fmt_desc_get(st->codecpar->format)))
+        avio_wb32(pb, av_get_bits_per_pixel(pixdesc));
+    else
+        avio_wb32(pb, 0);
+    avio_wb32(pb, 0);
+
+    avio_wb32(pb, pkt->size);
+    avio_write(pb, pkt->data, pkt->size);
+    return 0;
+}
+
+static int flac_finish_header(struct AVFormatContext *s)
+{
+    FlacMuxerContext *c = s->priv_data;
+    int i, ret, padding = s->metadata_header_padding;
     if (padding < 0)
         padding = 8192;
     /* The FLAC specification states that 24 bits are used to represent the
      * size of a metadata block so we must clip this value to 2^24-1. */
     padding = av_clip_uintp2(padding, 24);
+
+    for (i = 0; i < c->nb_pics; i++) {
+        ret = flac_write_picture(s, &c->pics[i]);
+        av_packet_unref(&c->pics[i]);
+        if (ret)
+            return ret;
+    }
+
+    ret = flac_write_block_comment(s->pb, &s->metadata, !padding,
+                                   s->flags & AVFMT_FLAG_BITEXACT);
+    if (ret)
+        return ret;
+
+    /* The command line flac encoder defaults to placing a seekpoint
+     * every 10s.  So one might add padding to allow that later
+     * but there seems to be no simple way to get the duration here.
+     * So just add the amount requested by the user. */
+    if (padding)
+        flac_write_block_padding(s->pb, padding, 1);
+
+    return 0;
+}
+
+static int flac_write_header(struct AVFormatContext *s)
+{
+    int ret, i;
+    AVCodecParameters *par;
+    FlacMuxerContext *c = s->priv_data;
+
+    c->audio_stream_idx = -1;
+    for (i = 0; i < s->nb_streams; i++) {
+        AVStream *st = s->streams[i];
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            if (c->audio_stream_idx >= 0 || st->codecpar->codec_id != AV_CODEC_ID_FLAC) {
+                av_log(s, AV_LOG_ERROR, "Invalid audio stream. Exactly one FLAC "
+                       "audio stream is required.\n");
+                return AVERROR(EINVAL);
+            }
+            par = s->streams[i]->codecpar;
+            c->audio_stream_idx = i;
+        } else if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
+            av_log(s, AV_LOG_ERROR, "Only audio streams and pictures are allowed in FLAC.\n");
+            return AVERROR(EINVAL);
+        } else if (st->codecpar->codec_id == AV_CODEC_ID_GIF) {
+            av_log(s, AV_LOG_ERROR, "GIF image support is not implemented.\n");
+            return AVERROR_PATCHWELCOME;
+        } else if (!c->write_header) {
+            av_log(s, AV_LOG_ERROR, "Can't write attached pictures without a header.\n");
+            return AVERROR(EINVAL);
+        }
+    }
+    if (c->audio_stream_idx < 0) {
+        av_log(s, AV_LOG_ERROR, "No audio stream present.\n");
+        return AVERROR(EINVAL);
+    }
+    c->waiting_pics = c->nb_pics = s->nb_streams - 1;
+    if (c->nb_pics && !(c->pics = av_calloc(c->nb_pics, sizeof(AVPacket))))
+        return AVERROR(ENOMEM);
+
+    if (!c->write_header)
+        return 0;
 
     ret = ff_flac_write_header(s->pb, par->extradata,
                                par->extradata_size, 0);
@@ -121,18 +258,51 @@ static int flac_write_header(struct AVFormatContext *s)
         }
     }
 
-    ret = flac_write_block_comment(s->pb, &s->metadata, !padding,
-                                   s->flags & AVFMT_FLAG_BITEXACT);
-    if (ret)
-        return ret;
+    if (!c->waiting_pics)
+        ret = flac_finish_header(s);
 
-    /* The command line flac encoder defaults to placing a seekpoint
-     * every 10s.  So one might add padding to allow that later
-     * but there seems to be no simple way to get the duration here.
-     * So just add the amount requested by the user. */
-    if (padding)
-        flac_write_block_padding(s->pb, padding, 1);
+    return ret;
+}
 
+static int flac_write_audio_packet(struct AVFormatContext *s, AVPacket *pkt)
+{
+    FlacMuxerContext *c = s->priv_data;
+    uint8_t *streaminfo;
+    int streaminfo_size;
+
+    /* check for updated streaminfo */
+    streaminfo = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA,
+                                         &streaminfo_size);
+    if (streaminfo && streaminfo_size == FLAC_STREAMINFO_SIZE) {
+        av_freep(&c->streaminfo);
+
+        c->streaminfo = av_malloc(FLAC_STREAMINFO_SIZE);
+        if (!c->streaminfo)
+            return AVERROR(ENOMEM);
+        memcpy(c->streaminfo, streaminfo, FLAC_STREAMINFO_SIZE);
+    }
+
+    if (pkt->size)
+        avio_write(s->pb, pkt->data, pkt->size);
+    return 0;
+}
+
+static int flac_queue_flush(AVFormatContext *s)
+{
+    FlacMuxerContext *c = s->priv_data;
+    AVPacketList *pktl;
+    int ret = 0, write = 1;
+
+    flac_finish_header(s);
+
+    while ((pktl = c->queue)) {
+        if (write && (ret = flac_write_audio_packet(s, &pktl->pkt)) < 0)
+            write = 0;
+        av_packet_unref(&pktl->pkt);
+        c->queue = pktl->next;
+        av_freep(&pktl);
+    }
+    c->queue_end = NULL;
     return ret;
 }
 
@@ -142,7 +312,17 @@ static int flac_write_trailer(struct AVFormatContext *s)
     int64_t file_size;
     FlacMuxerContext *c = s->priv_data;
     uint8_t *streaminfo = c->streaminfo ? c->streaminfo :
-                                          s->streams[0]->codecpar->extradata;
+                                          s->streams[c->audio_stream_idx]->codecpar->extradata;
+
+    if (c->waiting_pics) {
+        av_log(s, AV_LOG_WARNING, "No packets were sent for some of the "
+               "attached pictures.\n");
+        flac_queue_flush(s);
+    }
+
+    for (i = 0; i < c->nb_pics; i++)
+        av_packet_unref(&c->pics[i]);
+    av_freep(&c->pics);
 
     if (!c->write_header || !streaminfo)
         return 0;
@@ -166,23 +346,63 @@ static int flac_write_trailer(struct AVFormatContext *s)
 static int flac_write_packet(struct AVFormatContext *s, AVPacket *pkt)
 {
     FlacMuxerContext *c = s->priv_data;
-    uint8_t *streaminfo;
-    int streaminfo_size;
+    if (pkt->stream_index == c->audio_stream_idx) {
+        if (c->waiting_pics) {
+            /* buffer audio packets until we get all the pictures */
+            AVPacketList *pktl = av_mallocz(sizeof(*pktl));
+            int ret;
+            if (!pktl) {
+                ret = AVERROR(ENOMEM);
+oom:
+                if (s->error_recognition & AV_EF_EXPLODE) {
+                    av_free(pktl);
+                    return ret;
+                }
+                av_log(s, AV_LOG_ERROR, "Out of memory in packet queue; skipping attached pictures\n");
+                c->waiting_pics = 0;
+                if ((ret = flac_queue_flush(s)) < 0)
+                    return ret;
+                return flac_write_audio_packet(s, pkt);
+            }
 
-    /* check for updated streaminfo */
-    streaminfo = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA,
-                                         &streaminfo_size);
-    if (streaminfo && streaminfo_size == FLAC_STREAMINFO_SIZE) {
-        av_freep(&c->streaminfo);
+            ret = av_packet_ref(&pktl->pkt, pkt);
+            if (ret < 0) {
+                av_freep(&pktl);
+                goto oom;
+            }
 
-        c->streaminfo = av_malloc(FLAC_STREAMINFO_SIZE);
-        if (!c->streaminfo)
-            return AVERROR(ENOMEM);
-        memcpy(c->streaminfo, streaminfo, FLAC_STREAMINFO_SIZE);
+            if (c->queue_end)
+                c->queue_end->next = pktl;
+            else
+                c->queue = pktl;
+            c->queue_end = pktl;
+        } else {
+            return flac_write_audio_packet(s, pkt);
+        }
+    } else {
+        int ret, index = pkt->stream_index;
+
+        /* warn only once for each stream */
+        if (s->streams[pkt->stream_index]->nb_frames == 1) {
+            av_log(s, AV_LOG_WARNING, "Got more than one picture in stream %d,"
+                   " ignoring.\n", pkt->stream_index);
+        }
+        if (!c->waiting_pics || s->streams[pkt->stream_index]->nb_frames >= 1)
+            return 0;
+
+        if (index > c->audio_stream_idx)
+            index--;
+
+        if ((ret = av_packet_ref(&c->pics[index], pkt)) < 0)
+            return ret;
+        c->waiting_pics--;
+
+        /* flush the buffered audio packets */
+        if (!c->waiting_pics &&
+            (ret = flac_queue_flush(s)) < 0)
+            return ret;
     }
 
-    if (pkt->size)
-        avio_write(s->pb, pkt->data, pkt->size);
     return 0;
 }
 
@@ -205,7 +425,7 @@ AVOutputFormat ff_flac_muxer = {
     .mime_type         = "audio/x-flac",
     .extensions        = "flac",
     .audio_codec       = AV_CODEC_ID_FLAC,
-    .video_codec       = AV_CODEC_ID_NONE,
+    .video_codec       = AV_CODEC_ID_PNG,
     .write_header      = flac_write_header,
     .write_packet      = flac_write_packet,
     .write_trailer     = flac_write_trailer,
