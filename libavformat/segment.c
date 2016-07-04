@@ -106,6 +106,8 @@ typedef struct SegmentContext {
     int frame_count;       ///< total number of reference frames
     int segment_frame_count; ///< number of reference frames in the segment
 
+    int split_chapters;    ///< split on chapter markers
+
     int64_t time_delta;
     int  individual_header_trailer; /**< Set by a private option. */
     int  write_header_trailer; /**< Set by a private option. */
@@ -186,6 +188,43 @@ static int segment_mux_init(AVFormatContext *s)
     return 0;
 }
 
+static int replace_variables(AVFormatContext *oc)
+{
+    char name[sizeof(oc->filename)];
+    char *p = name;
+    char *out = oc->filename;
+    strncpy(name, oc->filename, sizeof(name));
+    while (*p) {
+        char c = *p++;
+        if (c == '$') {
+            if (*p == '$') {
+                p++;
+                goto append;
+            } else {
+                int len;
+                const char *val;
+                const AVDictionaryEntry *e;
+                int end = strcspn(p, "$");
+                if (p[end] == '\0')
+                    continue;
+                p[end] = '\0';
+                e = av_dict_get(oc->metadata, p, NULL, 0);
+                val = e ? e->value : "(unknown)";
+                len = strlen(val);
+                strncpy(out, val, oc->filename + sizeof(oc->filename) - 1 - out);
+                out = FFMIN(oc->filename + sizeof(oc->filename) - 1, out + len);
+                p += end + 1;
+            }
+        } else {
+append:
+            if (out - oc->filename < sizeof(oc->filename) - 1)
+                *out++ = c;
+        }
+    }
+    *out = '\0';
+    return 0;
+}
+
 static int set_segment_filename(AVFormatContext *s)
 {
     SegmentContext *seg = s->priv_data;
@@ -209,6 +248,9 @@ static int set_segment_filename(AVFormatContext *s)
         av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", s->filename);
         return AVERROR(EINVAL);
     }
+
+    if (seg->split_chapters)
+        replace_variables(oc);
 
     /* copy modified name in list entry */
     size = strlen(av_basename(oc->filename)) + 1;
@@ -236,6 +278,8 @@ static int segment_start(AVFormatContext *s, int write_header)
         if ((err = segment_mux_init(s)) < 0)
             return err;
         oc = seg->avf;
+        if (seg->split_chapters && seg->segment_count < s->nb_chapters && (err = av_dict_copy(&oc->metadata, s->chapters[seg->segment_count]->metadata, 0)) < 0)
+            return err;
     }
 
     seg->segment_idx++;
@@ -659,10 +703,14 @@ static int seg_init(AVFormatContext *s)
                "you can use output_ts_offset instead of it\n");
     }
 
-    if (!!seg->time_str + !!seg->times_str + !!seg->frames_str > 1) {
+    if (seg->segment_idx < 0)
+        seg->segment_idx = seg->split_chapters;
+
+    if (!!seg->time_str + !!seg->times_str + !!seg->frames_str + !!seg->split_chapters > 1) {
         av_log(s, AV_LOG_ERROR,
-               "segment_time, segment_times, and segment_frames options "
-               "are mutually exclusive, select just one of them\n");
+               "segment_time, segment_times, segment_frames, and "
+               "segment_chapters options are mutually exclusive; "
+               "select just one of them\n");
         return AVERROR(EINVAL);
     }
 
@@ -672,7 +720,7 @@ static int seg_init(AVFormatContext *s)
     } else if (seg->frames_str) {
         if ((ret = parse_frames(s, &seg->frames, &seg->nb_frames, seg->frames_str)) < 0)
             return ret;
-    } else {
+    } else if (!seg->split_chapters) {
         /* set default value if not specified */
         if (!seg->time_str)
             seg->time_str = av_strdup("2");
@@ -737,6 +785,9 @@ static int seg_init(AVFormatContext *s)
     }
 
     if ((ret = segment_mux_init(s)) < 0)
+        return ret;
+
+    if (seg->split_chapters && s->nb_chapters && (ret = av_dict_copy(&seg->avf->metadata, s->chapters[0]->metadata, 0)) < 0)
         return ret;
 
     if ((ret = set_segment_filename(s)) < 0)
@@ -860,6 +911,9 @@ calc_times:
     } else if (seg->frames) {
         start_frame = seg->segment_count < seg->nb_frames ?
             seg->frames[seg->segment_count] : INT_MAX;
+    } else if (seg->split_chapters) {
+        end_pts = seg->segment_count + 1 < s->nb_chapters ?
+            av_rescale_q(s->chapters[seg->segment_count]->end, s->chapters[seg->segment_count]->time_base, AV_TIME_BASE_Q) : INT64_MAX;
     } else {
         if (seg->use_clocktime) {
             int64_t avgt = av_gettime();
@@ -1042,9 +1096,10 @@ static const AVOption options[] = {
     { "segment_time_delta","set approximation value used for the segment times", OFFSET(time_delta), AV_OPT_TYPE_DURATION, {.i64 = 0}, 0, 0, E },
     { "segment_times",     "set segment split time points",              OFFSET(times_str),AV_OPT_TYPE_STRING,{.str = NULL},  0, 0,       E },
     { "segment_frames",    "set segment split frame numbers",            OFFSET(frames_str),AV_OPT_TYPE_STRING,{.str = NULL},  0, 0,       E },
+    { "segment_chapters",  "split segments on chapter markers",          OFFSET(split_chapters), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E },
     { "segment_wrap",      "set number after which the index wraps",     OFFSET(segment_idx_wrap), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, E },
     { "segment_list_entry_prefix", "set base url prefix for segments", OFFSET(entry_prefix), AV_OPT_TYPE_STRING,  {.str = NULL}, 0, 0, E },
-    { "segment_start_number", "set the sequence number of the first segment", OFFSET(segment_idx), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, E },
+    { "segment_start_number", "set the sequence number of the first segment", OFFSET(segment_idx), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, E },
     { "segment_wrap_number", "set the number of wrap before the first segment", OFFSET(segment_idx_wrap_nb), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, E },
     { "strftime",          "set filename expansion with strftime at segment creation", OFFSET(use_strftime), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, E },
     { "increment_tc", "increment timecode between each segment", OFFSET(increment_tc), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, E },

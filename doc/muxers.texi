@@ -1615,6 +1615,12 @@ This option specifies to start a new segment whenever a reference
 stream key frame is found and the sequential number (starting from 0)
 of the frame is greater or equal to the next value in the list.
 
+@item segment_chapters @var{1|0}
+Split each chapter into its own segment. Metadata from the chapters
+will be written to the corresponding segments. If this option is selected
+and the filename contains tokens in the format @code{$varname$}, they
+will be replaced by the corresponding metadata values.
+
 @item segment_wrap @var{limit}
 Wrap around segment index once it reaches @var{limit}.
 
