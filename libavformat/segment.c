@@ -119,6 +119,7 @@ typedef struct SegmentContext {
     int   reference_stream_index;
     int   break_non_keyframes;
     int   write_empty;
+    int   dup_attached_pics;
 
     int use_rename;
     char temp_list_filename[1024];
@@ -126,6 +127,8 @@ typedef struct SegmentContext {
     SegmentListEntry cur_entry;
     SegmentListEntry *segment_list_entries;
     SegmentListEntry *segment_list_entries_end;
+
+    AVPacket *attached_pics;
 } SegmentContext;
 
 static void print_csv_escaped_str(AVIOContext *ctx, const char *str)
@@ -193,16 +196,15 @@ static int replace_variables(AVFormatContext *oc)
 {
     char name[sizeof(oc->filename)];
     char *p = name;
-    char *out = oc->filename;
+    AVBPrint bprint;
     strncpy(name, oc->filename, sizeof(name));
+    av_bprint_init_for_buffer(&bprint, oc->filename, sizeof(oc->filename));
     while (*p) {
         char c = *p++;
         if (c == '$') {
             if (*p == '$') {
-                p++;
-                goto append;
+                av_bprint_chars(&bprint, c, 1);
             } else {
-                int len;
                 const char *val;
                 const AVDictionaryEntry *e;
                 int end = strcspn(p, "$");
@@ -211,18 +213,13 @@ static int replace_variables(AVFormatContext *oc)
                 p[end] = '\0';
                 e = av_dict_get(oc->metadata, p, NULL, 0);
                 val = e ? e->value : "(unknown)";
-                len = strlen(val);
-                strncpy(out, val, oc->filename + sizeof(oc->filename) - 1 - out);
-                out = FFMIN(oc->filename + sizeof(oc->filename) - 1, out + len);
+                av_bprint_append_data(&bprint, val, strlen(val));
                 p += end + 1;
             }
         } else {
-append:
-            if (out - oc->filename < sizeof(oc->filename) - 1)
-                *out++ = c;
+            av_bprint_chars(&bprint, c, 1);
         }
     }
-    *out = '\0';
     return 0;
 }
 
@@ -301,6 +298,7 @@ static int segment_start(AVFormatContext *s, int write_header)
         av_opt_set(oc->priv_data, "mpegts_flags", "+resend_headers", 0);
 
     if (write_header) {
+        int i;
         AVDictionary *options = NULL;
         av_dict_copy(&options, seg->format_options, 0);
         av_dict_set(&options, "fflags", "-autobsf", 0);
@@ -308,6 +306,13 @@ static int segment_start(AVFormatContext *s, int write_header)
         av_dict_free(&options);
         if (err < 0)
             return err;
+        for (i = 0; i < s->nb_streams; i++) {
+            if (seg->dup_attached_pics &&
+                s->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC &&
+                seg->attached_pics[i].data) {
+                av_write_frame(oc, &seg->attached_pics[i]);
+            }
+        }
     }
 
     seg->segment_frame_count = 0;
@@ -680,6 +685,12 @@ static void seg_free(AVFormatContext *s)
     ff_format_io_close(seg->avf, &seg->list_pb);
     avformat_free_context(seg->avf);
     seg->avf = NULL;
+    if (seg->attached_pics) {
+        int i;
+        for (i = 0; i < s->nb_streams; i++)
+            av_packet_unref(&seg->attached_pics[i]);
+        av_freep(&seg->attached_pics);
+    }
 }
 
 static int seg_init(AVFormatContext *s)
@@ -840,6 +851,9 @@ static int seg_init(AVFormatContext *s)
         avpriv_set_pts_info(outer_st, inner_st->pts_wrap_bits, inner_st->time_base.num, inner_st->time_base.den);
     }
 
+    if (seg->dup_attached_pics && !(seg->attached_pics = av_calloc(s->nb_streams, sizeof(AVPacket))))
+        return AVERROR(ENOMEM);
+
     if (oc->avoid_negative_ts > 0 && s->avoid_negative_ts < 0)
         s->avoid_negative_ts = 1;
 
@@ -904,6 +918,9 @@ static int seg_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (!seg->avf || !seg->avf->pb)
         return AVERROR(EINVAL);
+
+    if (seg->dup_attached_pics && st->disposition & AV_DISPOSITION_ATTACHED_PIC)
+        av_copy_packet(&seg->attached_pics[pkt->stream_index], pkt);
 
 calc_times:
     if (seg->times) {
@@ -1111,6 +1128,7 @@ static const AVOption options[] = {
     { "reset_timestamps", "reset timestamps at the beginning of each segment", OFFSET(reset_timestamps), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E },
     { "initial_offset", "set initial timestamp offset", OFFSET(initial_offset), AV_OPT_TYPE_DURATION, {.i64 = 0}, -INT64_MAX, INT64_MAX, E },
     { "write_empty_segments", "allow writing empty 'filler' segments", OFFSET(write_empty), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E },
+    { "dup_attached_pics",  "write attached pictures to all segments", OFFSET(dup_attached_pics), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, E },
     { NULL },
 };
 

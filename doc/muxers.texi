@@ -1653,6 +1653,10 @@ argument must be a time duration specification, and defaults to 0.
 If enabled, write an empty segment if there are no packets during the period a
 segment would usually span. Otherwise, the segment will be filled with the next
 packet written. Defaults to @code{0}.
+
+@item dup_attached_pics @var{1|0}
+If enabled, attached-picture packets will be written to all segments, rather
+than only the first. Defaults to @code{1}.
 @end table
 
 @subsection Examples
