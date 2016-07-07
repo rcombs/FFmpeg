@@ -313,6 +313,8 @@ static int flac_write_trailer(struct AVFormatContext *s)
     FlacMuxerContext *c = s->priv_data;
     uint8_t *streaminfo = c->streaminfo ? c->streaminfo :
                                           s->streams[c->audio_stream_idx]->codecpar->extradata;
+    int streaminfo_size = c->streaminfo ? FLAC_STREAMINFO_SIZE :
+                                          s->streams[c->audio_stream_idx]->codecpar->extradata_size;
 
     if (c->waiting_pics) {
         av_log(s, AV_LOG_WARNING, "No packets were sent for some of the "
@@ -327,7 +329,7 @@ static int flac_write_trailer(struct AVFormatContext *s)
     if (!c->write_header || !streaminfo)
         return 0;
 
-    if (pb->seekable & AVIO_SEEKABLE_NORMAL) {
+    if (pb->seekable & AVIO_SEEKABLE_NORMAL && (streaminfo_size == FLAC_STREAMINFO_SIZE)) {
         /* rewrite the STREAMINFO header block data */
         file_size = avio_tell(pb);
         avio_seek(pb, 8, SEEK_SET);
