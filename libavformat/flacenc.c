@@ -30,6 +30,7 @@
 #include "internal.h"
 #include "vorbiscomment.h"
 #include "libavcodec/bytestream.h"
+#include "libavutil/crc.h"
 
 
 typedef struct FlacMuxerContext {
@@ -46,6 +47,8 @@ typedef struct FlacMuxerContext {
     uint8_t *streaminfo;
 
     unsigned attached_types;
+
+    uint64_t samples;
 } FlacMuxerContext;
 
 static int flac_write_block_padding(AVIOContext *pb, unsigned int n_padding_bytes,
@@ -264,11 +267,17 @@ static int flac_write_header(struct AVFormatContext *s)
     return ret;
 }
 
+static const int32_t blocksize_table[16] = {
+     0,    192, 576<<0, 576<<1, 576<<2, 576<<3,      0,      0,
+256<<0, 256<<1, 256<<2, 256<<3, 256<<4, 256<<5, 256<<6, 256<<7
+};
+
 static int flac_write_audio_packet(struct AVFormatContext *s, AVPacket *pkt)
 {
     FlacMuxerContext *c = s->priv_data;
     uint8_t *streaminfo;
     int streaminfo_size;
+    char header[16];
 
     /* check for updated streaminfo */
     streaminfo = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA,
@@ -282,8 +291,77 @@ static int flac_write_audio_packet(struct AVFormatContext *s, AVPacket *pkt)
         memcpy(c->streaminfo, streaminfo, FLAC_STREAMINFO_SIZE);
     }
 
-    if (pkt->size)
-        avio_write(s->pb, pkt->data, pkt->size);
+    if (pkt->size) {
+        uint8_t tmp;
+        uint64_t pts = c->samples;
+        int offset = 5;
+        int headerlen = 4;
+        int bscode, bs;
+        int crc;
+        if (pkt->size < FLAC_MIN_FRAME_SIZE)
+            return AVERROR_INVALIDDATA;
+        memcpy(header, pkt->data, 4);
+        if (pkt->pts == AV_NOPTS_VALUE)
+            pts = 0;
+        if ((pkt->data[4] & 0xC0) == 0xC0)
+            offset += ff_clz((unsigned char)~pkt->data[4]) - 25;
+        else if (pkt->data[4] & 0x80)
+            return AVERROR_INVALIDDATA;
+        if (pkt->size <= offset + 1)
+            return AVERROR_INVALIDDATA;
+
+        // Forcing use of sample counts instead of block counts to avoid bs
+        // mismatch issues
+        header[1] |= 1;
+
+        bscode = (unsigned char)header[2] >> 4;
+        bs = blocksize_table[bscode];
+        if (bscode == 0)
+            return AVERROR_INVALIDDATA;
+        if (bscode == 6) {
+            if (pkt->size <= offset + 1)
+                return AVERROR_INVALIDDATA;
+            bs = pkt->data[offset] + 1;
+        } else if (bscode == 7) {
+            if (pkt->size <= offset + 2)
+                return AVERROR_INVALIDDATA;
+            bs = AV_RB16(&pkt->data[offset]) + 1;
+        }
+
+        c->samples += bs;
+
+        PUT_UTF8(pts, tmp, header[headerlen++] = tmp;)
+        if (headerlen > 11)
+            return AVERROR_INVALIDDATA;
+        if ((bscode & 0xE) == 0x6)
+            header[headerlen++] = pkt->data[offset++];
+        if (pkt->size <= offset + 1)
+            return AVERROR_INVALIDDATA;
+        if (bscode == 0x7)
+            header[headerlen++] = pkt->data[offset++];
+        if (pkt->size <= offset + 1)
+            return AVERROR_INVALIDDATA;
+        if ((header[2] & 0xC) == 0xC) {
+            header[headerlen++] = pkt->data[offset++];
+            if (pkt->size <= offset + 1)
+                return AVERROR_INVALIDDATA;
+            if ((header[2] & 0x3) == 0x3)
+                return AVERROR_INVALIDDATA;
+            else if (header[2] & 0x3) {
+                header[headerlen++] = pkt->data[offset++];
+                if (pkt->size <= offset + 1)
+                    return AVERROR_INVALIDDATA;
+            }
+        }
+        header[headerlen] = av_crc(av_crc_get_table(AV_CRC_8_ATM), 0, header, headerlen);
+        headerlen++; offset++;
+        crc = av_crc(av_crc_get_table(AV_CRC_16_ANSI), 0, header, headerlen);
+        if (pkt->size < offset + 3)
+            return AVERROR_INVALIDDATA;
+        avio_write(s->pb, header, headerlen);
+        avio_write(s->pb, pkt->data + offset, pkt->size - offset - 2);
+        avio_wl16(s->pb, av_crc(av_crc_get_table(AV_CRC_16_ANSI), crc, pkt->data + offset, pkt->size - offset - 2));
+    }
     return 0;
 }
 
@@ -333,7 +411,10 @@ static int flac_write_trailer(struct AVFormatContext *s)
         /* rewrite the STREAMINFO header block data */
         file_size = avio_tell(pb);
         avio_seek(pb, 8, SEEK_SET);
-        avio_write(pb, streaminfo, FLAC_STREAMINFO_SIZE);
+        avio_write(pb, streaminfo, 13);
+        avio_w8(pb, (streaminfo[13] & 0xF0) | ((c->samples >> 32) & 0xF));
+        avio_wb32(pb, c->samples);
+        avio_write(pb, streaminfo + 18, FLAC_STREAMINFO_SIZE - 18);
         avio_seek(pb, file_size, SEEK_SET);
         avio_flush(pb);
     } else {
