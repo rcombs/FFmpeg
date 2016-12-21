@@ -185,7 +185,8 @@ static void register_all(void)
     REGISTER_DEMUXER (MM,               mm);
     REGISTER_MUXDEMUX(MMF,              mmf);
     REGISTER_MUXDEMUX(MOV,              mov);
-    REGISTER_MUXER   (MP2,              mp2);
+    REGISTER_MUXDEMUX(MP1,              mp1);
+    REGISTER_MUXDEMUX(MP2,              mp2);
     REGISTER_MUXDEMUX(MP3,              mp3);
     REGISTER_MUXER   (MP4,              mp4);
     REGISTER_DEMUXER (MPC,              mpc);

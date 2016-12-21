@@ -609,8 +609,8 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
     }
 
     if (id3v2_extra_meta) {
-        if (!strcmp(s->iformat->name, "mp3") || !strcmp(s->iformat->name, "aac") ||
-            !strcmp(s->iformat->name, "tta")) {
+        if (!strcmp(s->iformat->name, "mp1") || !strcmp(s->iformat->name, "mp2") || !strcmp(s->iformat->name, "mp3") ||
+            !strcmp(s->iformat->name, "aac") || !strcmp(s->iformat->name, "tta")) {
             if ((ret = ff_id3v2_parse_apic(s, &id3v2_extra_meta)) < 0)
                 goto fail;
         } else
