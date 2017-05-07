@@ -130,6 +130,7 @@ OBJS-$(CONFIG_CDXL_DEMUXER)              += cdxl.o
 OBJS-$(CONFIG_CINE_DEMUXER)              += cinedec.o
 OBJS-$(CONFIG_CONCAT_DEMUXER)            += concatdec.o
 OBJS-$(CONFIG_CRC_MUXER)                 += crcenc.o
+OBJS-$(CONFIG_CUE_DEMUXER)               += cuedec.o
 OBJS-$(CONFIG_DATA_DEMUXER)              += rawdec.o
 OBJS-$(CONFIG_DATA_MUXER)                += rawenc.o
 OBJS-$(CONFIG_DASH_MUXER)                += dash.o dashenc.o

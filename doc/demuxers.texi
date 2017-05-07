@@ -244,6 +244,23 @@ file subdir/file-2.wav
 @end example
 @end itemize
 
+@section cue
+
+Cue sheet demuxer.
+
+This demuxer reads a cue sheet (text file) and exports its track listing in
+the form of AVChapters. Packet data is read from the file listed in the sheet,
+which must be in the same directory. To override the path the packet data is
+read from, use the @code{url} option.
+
+This demuxer currently only supports cue sheets with a single audio file.
+
+This demuxer can be used along with the segment muxer to split a cue+audio pair
+into individual files for the different tracks:
+@example
+ffmpeg -i input.cue -f segment -segment_chapters 1 '%02d $artist$ - $title$.flac'
+@end example
+
 @section flv, live_flv
 
 Adobe Flash Video Format demuxer.
