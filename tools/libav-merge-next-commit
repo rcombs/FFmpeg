@@ -7,7 +7,7 @@ fi
 
 [ "$1" = "noop" ] && merge_opts="-s ours"
 
-nextrev=$(git rev-list libav/master --not master --no-merges | tail -n1)
+nextrev=$(git rev-list libav/master --not HEAD --no-merges | tail -n1)
 if [ -z "$nextrev" ]; then
     printf "Nothing to merge..\n"
     exit 0
