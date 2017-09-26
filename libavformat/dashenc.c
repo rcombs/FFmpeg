@@ -351,7 +351,8 @@ static int write_adaptation_set(AVFormatContext *s, AVIOContext *out, int as_ind
             continue;
 
         if (as->media_type == AVMEDIA_TYPE_VIDEO) {
-            avio_printf(out, "\t\t\t<Representation id=\"%d\" mimeType=\"video/mp4\" codecs=\"%s\"%s width=\"%d\" height=\"%d\"\n",
+            AVStream *st = s->streams[i];
+            avio_printf(out, "\t\t\t<Representation id=\"%d\" mimeType=\"video/mp4\" codecs=\"%s\"%s width=\"%d\" height=\"%d\"",
                 i, os->codec_str, os->bandwidth_str, s->streams[i]->codecpar->width, s->streams[i]->codecpar->height);
             if (st->avg_frame_rate.num)
                 avio_printf(out, " frameRate=\"%d/%d\"", st->avg_frame_rate.num, st->avg_frame_rate.den);
@@ -642,7 +643,7 @@ static int dash_init(AVFormatContext *s)
         return ret;
 
     if ((ret = parse_adaptation_sets(s)) < 0)
-        goto fail;
+        return ret;
 
     for (i = 0; i < s->nb_streams; i++) {
         OutputStream *os = &c->streams[i];
