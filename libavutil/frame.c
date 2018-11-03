@@ -165,6 +165,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     frame->color_range         = AVCOL_RANGE_UNSPECIFIED;
     frame->chroma_location     = AVCHROMA_LOC_UNSPECIFIED;
     frame->flags               = 0;
+    frame->sub_pixfmt          = AV_PIX_FMT_NONE;
 }
 
 static void free_side_data(AVFrameSideData **ptr_sd)
@@ -415,6 +416,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     dst->colorspace             = src->colorspace;
     dst->color_range            = src->color_range;
     dst->chroma_location        = src->chroma_location;
+    dst->sub_pixfmt             = src->sub_pixfmt;
     dst->sub_start_display      = src->sub_start_display;
     dst->sub_end_display        = src->sub_end_display;
 
@@ -484,6 +486,7 @@ int av_frame_ref(AVFrame *dst, const AVFrame *src)
     dst->channels       = src->channels;
     dst->channel_layout = src->channel_layout;
     dst->nb_samples     = src->nb_samples;
+    dst->sub_nb_rects   = src->sub_nb_rects;
 
     ret = frame_copy_props(dst, src, 0);
     if (ret < 0)
@@ -840,9 +843,7 @@ static int frame_copy_subtitle(AVFrame *dst, const AVFrame *src)
 
         dst_rect->flags = src_rect->flags;
 
-        if (src->format != AV_PIX_FMT_NONE) {
-            /* (Alloc and) copy bitmap subtitle */
-
+        if (src->format == AV_SUBTITLE_FMT_BITMAP) {
             av_assert1(!src_rect->text);
 
             dst_rect->x = src_rect->x;
@@ -858,15 +859,15 @@ static int frame_copy_subtitle(AVFrame *dst, const AVFrame *src)
             av_image_copy(dst_rect->data, dst_rect->linesize,
                           src_rect->data, src_rect->linesize,
                           dst->format, dst_rect->w, dst_rect->h);
-        } else {
-            /* Copy text subtitle */
-
+        } else if (src->format == AV_SUBTITLE_FMT_TEXT) {
             av_assert1(!src_rect->x && !src_rect->y);
             av_assert1(!src_rect->w && !src_rect->w);
 
             dst_rect->text = av_strdup(src_rect->text);
             if (!dst_rect->text)
                 return AVERROR(ENOMEM);
+        } else {
+            return AVERROR_BUG;
         }
     }
     return 0;

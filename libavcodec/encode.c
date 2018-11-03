@@ -172,6 +172,109 @@ int ff_encode_get_frame(AVCodecContext *avctx, AVFrame *frame)
     return 0;
 }
 
+/*
+ * TODO: delete this compatibility code when all subtitles encoders moved to
+ * encode2
+ */
+static int compat_encode_subtitle_frame(AVCodecContext *avctx,
+                                        AVPacket *avpkt,
+                                        const AVFrame *frame,
+                                        int *got_packet_ptr)
+{
+FF_DISABLE_DEPRECATION_WARNINGS
+    int i, ret;
+    AVPacket tmp_pkt;
+    AVSubtitle subtitle = {.pts = AV_NOPTS_VALUE};
+
+    *got_packet_ptr = 0;
+    if (!frame)
+        return 0;
+
+    /* Allocate (once) a temporary large output subtitle buffer */
+    if (!avctx->internal->byte_buffer) {
+        const int subtitle_out_max_size = 1024 * 1024;
+        uint8_t *subtitle_out = av_malloc(subtitle_out_max_size);
+        if (!subtitle_out)
+            return AVERROR(ENOMEM);
+
+        avctx->internal->byte_buffer      = subtitle_out;
+        avctx->internal->byte_buffer_size = subtitle_out_max_size;
+    }
+
+    /* Craft an AVSubtitle from the AVFrame */
+    subtitle.format = frame->format == AV_SUBTITLE_FMT_BITMAP ? 0 : 1;
+    subtitle.rects  = av_mallocz_array(frame->sub_nb_rects, sizeof(*subtitle.rects));
+    if (!subtitle.rects)
+        return AVERROR(ENOMEM);
+    subtitle.num_rects = frame->sub_nb_rects;
+    subtitle.pts = frame->pts;
+
+    subtitle.start_display_time = av_rescale_q(frame->sub_start_display, AV_TIME_BASE_Q, av_make_q(1, 1000));
+    subtitle.end_display_time   = av_rescale_q(frame->sub_end_display,   AV_TIME_BASE_Q, av_make_q(1, 1000));
+
+    av_log(0,0,"encode %d rects [start:%d end:%d]\n",
+           frame->sub_nb_rects, subtitle.start_display_time, subtitle.end_display_time);
+
+    for (i = 0; i < frame->sub_nb_rects; i++) {
+        const AVFrameSubtitleRectangle *src_rect = (AVFrameSubtitleRectangle *)frame->extended_data[i];
+        AVSubtitleRect *dst_rect;
+
+        dst_rect = av_mallocz(sizeof(*subtitle.rects[i]));
+        if (!dst_rect) {
+            ret = AVERROR(ENOMEM);
+            goto end;
+        }
+        subtitle.rects[i] = dst_rect;
+
+        if (subtitle.format) {
+            dst_rect->type = SUBTITLE_ASS;
+            dst_rect->ass  = src_rect->text;
+            av_log(0,0,"text rect with ass=%s\n", dst_rect->ass);
+        } else {
+            dst_rect->type = SUBTITLE_BITMAP;
+            dst_rect->x = src_rect->x;
+            dst_rect->y = src_rect->x;
+            dst_rect->w = src_rect->w;
+            dst_rect->h = src_rect->h;
+            memcpy(dst_rect->data,     src_rect->data,     sizeof(dst_rect->data));
+            memcpy(dst_rect->linesize, src_rect->linesize, sizeof(dst_rect->linesize));
+        }
+        dst_rect->flags = src_rect->flags;
+    }
+
+    /* Send it to the old encode_sub API */
+    ret = avcodec_encode_subtitle(avctx,
+                                  avctx->internal->byte_buffer,
+                                  avctx->internal->byte_buffer_size,
+                                  &subtitle);
+    if (ret < 0)
+        goto end;
+
+    /* Wrap the encoded buffer into a ref-counted AVPacket */
+    av_init_packet(&tmp_pkt);
+    tmp_pkt.data = avctx->internal->byte_buffer;
+    tmp_pkt.size = ret;
+    ret = av_packet_ref(avpkt, &tmp_pkt);
+    if (ret < 0)
+        goto end;
+    avpkt->pts = frame->pts;
+    avpkt->dts = frame->pkt_dts;
+    avpkt->duration = frame->pkt_duration;
+
+    av_log(0,0,"ENCODE PKT DURATION=%"PRId64"\n", frame->pkt_duration);
+
+    *got_packet_ptr = 1;
+
+end:
+    /* Free the temporary subtitle holder. We can not use avsubtitle_free() as
+     * the rectangle data are actually owned by the AVFrame */
+    for (i = 0; i < subtitle.num_rects; i++)
+        av_freep(&subtitle.rects[i]);
+    av_freep(&subtitle.rects);
+    return ret;
+FF_ENABLE_DEPRECATION_WARNINGS
+}
+
 static int encode_simple_internal(AVCodecContext *avctx, AVPacket *avpkt)
 {
     AVCodecInternal   *avci = avctx->internal;
@@ -201,9 +304,11 @@ static int encode_simple_internal(AVCodecContext *avctx, AVPacket *avpkt)
 
     got_packet = 0;
 
-    av_assert0(avctx->codec->encode2);
+    av_assert0(avctx->codec->encode2 || avctx->codec->encode_sub);
 
-    if (CONFIG_FRAME_THREAD_ENCODER &&
+    if (avctx->codec->encode_sub && !avctx->codec->encode2)
+        ret = compat_encode_subtitle_frame(avctx, avpkt, frame, &got_packet);
+    else if (CONFIG_FRAME_THREAD_ENCODER &&
         avci->frame_thread_encoder && (avctx->active_thread_type & FF_THREAD_FRAME))
         /* This might modify frame, but it doesn't matter, because
          * the frame properties used below are not used for video
@@ -360,98 +465,6 @@ static int encode_send_frame_internal(AVCodecContext *avctx, const AVFrame *src)
 
     return 0;
 }
-
-#if 0
-// TODO: delete this compatibility code when all subtitles encoders moved
-// to send_frame
-static int encode_subtitle_frame(AVCodecContext *avctx,
-                                 AVPacket *avpkt,
-                                 const AVFrame *frame,
-                                 int *got_packet_ptr)
-{
-FF_DISABLE_DEPRECATION_WARNINGS
-    int i, ret;
-    AVPacket tmp_pkt;
-    AVSubtitle subtitle;
-
-    get_subtitle_defaults(&subtitle);
-
-    /* Allocate (once) a temporary large output subtitle buffer */
-    if (!avctx->internal->byte_buffer) {
-        const int subtitle_out_max_size = 1024 * 1024;
-        uint8_t *subtitle_out = av_malloc(subtitle_out_max_size);
-        if (!subtitle_out)
-            return AVERROR(ENOMEM);
-
-        avctx->internal->byte_buffer      = subtitle_out;
-        avctx->internal->byte_buffer_size = subtitle_out_max_size;
-    }
-
-    /* Craft an AVSubtitle from the AVFrame */
-    subtitle.format = frame->format == AV_PIX_FMT_NONE;
-    subtitle.rects  = av_mallocz_array(frame->sub_nb_rects, sizeof(*subtitle.rects));
-    if (!subtitle.rects)
-        return AVERROR(ENOMEM);
-    subtitle.num_rects = frame->sub_nb_rects;
-    subtitle.pts = frame->pts;
-
-    for (i = 0; i < frame->sub_nb_rects; i++) {
-        const AVFrameSubtitleRectangle *src_rect = (AVFrameSubtitleRectangle *)frame->extended_data[i];
-        AVSubtitleRect *dst_rect;
-
-        dst_rect = av_mallocz(sizeof(*subtitle.rects[i]));
-        if (!dst_rect) {
-            ret = AVERROR(ENOMEM);
-            goto end;
-        }
-        subtitle.rects[i] = dst_rect;
-
-        if (subtitle.format) {
-            dst_rect->type = SUBTITLE_ASS;
-            dst_rect->ass  = src_rect->text;
-        } else {
-            dst_rect->type = SUBTITLE_BITMAP;
-            dst_rect->x = src_rect->x;
-            dst_rect->y = src_rect->x;
-            dst_rect->w = src_rect->w;
-            dst_rect->h = src_rect->h;
-            memcpy(dst_rect->data,     src_rect->data,     sizeof(dst_rect->data));
-            memcpy(dst_rect->linesize, src_rect->linesize, sizeof(dst_rect->linesize));
-        }
-        dst_rect->flags = src_rect->flags;
-    }
-
-    /* Send it to the old API */
-    ret = avcodec_encode_subtitle(avctx,
-                                  avctx->internal->byte_buffer,
-                                  avctx->internal->byte_buffer_size,
-                                  &subtitle);
-    if (ret < 0)
-        goto end;
-
-    /* Wrap the encoded buffer into a ref-counted AVPacket */
-    av_init_packet(&tmp_pkt);
-    tmp_pkt.data = avctx->internal->byte_buffer;
-    tmp_pkt.size = ret;
-    ret = av_packet_ref(avpkt, &tmp_pkt);
-    if (ret < 0)
-        goto end;
-    avpkt->pts = frame->pts;
-    avpkt->dts = frame->pkt_dts;
-    avpkt->duration = frame->pkt_duration;
-
-    *got_packet_ptr = 1;
-
-end:
-    /* Free the temporary subtitle holder. We can not use avsubtitle_free() as
-     * the rectangle data are actually owned by the AVFrame */
-    for (i = 0; i < subtitle.num_rects; i++)
-        av_freep(&subtitle.rects[i]);
-    av_freep(&subtitle.rects);
-    return ret;
-FF_ENABLE_DEPRECATION_WARNINGS
-}
-#endif
 
 int attribute_align_arg avcodec_send_frame(AVCodecContext *avctx, const AVFrame *frame)
 {

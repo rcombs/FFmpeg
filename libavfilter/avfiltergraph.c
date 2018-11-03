@@ -549,6 +549,9 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                                                             NULL, graph)) < 0)
                         return ret;
                     break;
+                case AVMEDIA_TYPE_SUBTITLE:
+                    av_log(log_ctx, AV_LOG_ERROR, "Automatic subtitle format conversion is not supported\n");
+                    return AVERROR_PATCHWELCOME;
                 default:
                     return AVERROR(EINVAL);
                 }
@@ -661,6 +664,27 @@ static enum AVSampleFormat find_best_sample_fmt_of_2(enum AVSampleFormat dst_fmt
     return score1 < score2 ? dst_fmt1 : dst_fmt2;
 }
 
+static int get_sub_fmt_loss_score(enum AVSubtitleFormat dst_fmt, enum AVSubtitleFormat src_fmt)
+{
+    /* Converting from text to bitmap subtitle is not automatic so we assume
+     * the maximum loss if it happens */
+    av_log(0,0,"hello compare?\n");
+    if (dst_fmt != src_fmt)
+        return INT_MAX;
+    /* Arbitrarily prefer text subtitles over the other formats */
+    if (dst_fmt == AV_SUBTITLE_FMT_TEXT)
+        return 0;
+    return 1;
+}
+
+static enum AVSampleFormat find_best_subtitle_fmt_of_2(enum AVSubtitleFormat dst_fmt1, enum AVSubtitleFormat dst_fmt2,
+                                                       enum AVSubtitleFormat src_fmt)
+{
+    const int score1 = get_sub_fmt_loss_score(dst_fmt1, src_fmt);
+    const int score2 = get_sub_fmt_loss_score(dst_fmt2, src_fmt);
+    return score1 < score2 ? dst_fmt1 : dst_fmt2;
+}
+
 static int pick_format(AVFilterLink *link, AVFilterLink *ref)
 {
     if (!link || !link->incfg.formats)
@@ -694,10 +718,24 @@ static int pick_format(AVFilterLink *link, AVFilterLink *ref)
                    av_get_sample_fmt_name(ref->format));
             link->incfg.formats->formats[0] = best;
         }
+    } else if (link->type == AVMEDIA_TYPE_SUBTITLE) {
+        if (ref && ref->type == AVMEDIA_TYPE_SUBTITLE) {
+            enum AVSubtitleFormat best = AV_SUBTITLE_FMT_NONE;
+            int i;
+            for (i = 0; i < link->in_formats->nb_formats; i++) {
+                enum AVSampleFormat p = link->in_formats->formats[i];
+                best = find_best_subtitle_fmt_of_2(best, p, ref->format);
+            }
+            av_log(link->src, AV_LOG_DEBUG, "picking %s out of %d ref:%s\n",
+                   av_get_subtitle_fmt_name(best), link->in_formats->nb_formats,
+                   av_get_subtitle_fmt_name(ref->format));
+            link->in_formats->formats[0] = best;
+        }
     }
 
     link->incfg.formats->nb_formats = 1;
     link->format = link->incfg.formats->formats[0];
+    av_log(0,0,"LINK->FORMAT=%s\n", av_get_subtitle_fmt_name(link->format));
 
     if (link->type == AVMEDIA_TYPE_AUDIO) {
         if (!link->incfg.samplerates->nb_formats) {
@@ -1219,16 +1257,23 @@ int avfilter_graph_config(AVFilterGraph *graphctx, void *log_ctx)
 {
     int ret;
 
+    av_log(0,0,"GRAPH CONFIG\n");
+
     if ((ret = graph_check_validity(graphctx, log_ctx)))
         return ret;
     if ((ret = graph_config_formats(graphctx, log_ctx)))
         return ret;
+    av_log(0,0,"#2\n");
     if ((ret = graph_config_links(graphctx, log_ctx)))
         return ret;
+    av_log(0,0,"#3\n");
     if ((ret = graph_check_links(graphctx, log_ctx)))
         return ret;
+    av_log(0,0,"#4\n");
     if ((ret = graph_config_pointers(graphctx, log_ctx)))
         return ret;
+
+    av_log(0,0,"GRAPH CONFIG OK\n");
 
     return 0;
 }
