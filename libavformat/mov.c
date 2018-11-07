@@ -1934,6 +1934,68 @@ static int mov_read_dvc1(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
+static int mov_read_dvcc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st;
+    uint16_t flags1;
+    uint8_t compat;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    st = c->fc->streams[c->fc->nb_streams-1];
+
+    if (atom.size < 12)
+        return AVERROR_INVALIDDATA;
+
+    avio_r8(pb); // major version
+    avio_r8(pb); // minor version
+    flags1 = avio_rb16(pb); // 7b profile, 6b level, 1b rpu_present, 1b el_present, 1b bl_present
+    compat = avio_r8(pb) >> 4; // 4b bl compat ID, 4b reserved
+
+    switch (flags1 >> 9) {
+    default: // Most existing profiles don't provide any information beyond what's in the compat ID
+        break;
+    case 5:
+        st->codecpar->color_space = AVCOL_SPC_ICTCP; // Technically "ITP", which appears identical
+        st->codecpar->color_trc = AVCOL_TRC_SMPTE2084;
+        st->codecpar->color_primaries = AVCOL_PRI_BT2020;
+        st->codecpar->chroma_location = AVCHROMA_LOC_LEFT;
+        st->codecpar->color_range = AVCOL_RANGE_JPEG;
+        break;
+    }
+
+    switch (compat) {
+    case 0:
+    default:
+        // "None"
+        break;
+    case 1: // "HDR10"
+    case 6: // "Ultra HD Blu-ray Disc HDR"
+        st->codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+        st->codecpar->color_trc = AVCOL_TRC_SMPTE2084;
+        st->codecpar->color_primaries = AVCOL_PRI_BT2020;
+        break;
+    case 2:
+        st->codecpar->color_space = AVCOL_SPC_BT709;
+        st->codecpar->color_trc = AVCOL_TRC_BT709;
+        st->codecpar->color_primaries = AVCOL_PRI_BT709;
+        break;
+    case 3:
+    case 4:
+        st->codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+        st->codecpar->color_trc = AVCOL_TRC_ARIB_STD_B67; // HLG
+        st->codecpar->color_primaries = AVCOL_PRI_BT2020;
+        break;
+    case 5: // "BT.1886"
+        st->codecpar->color_space = AVCOL_SPC_BT2020_NCL;
+        st->codecpar->color_trc = AVCOL_TRC_BT2020_10;
+        st->codecpar->color_primaries = AVCOL_PRI_BT2020;
+        break;
+    }
+
+    return 0;
+}
+
 /**
  * An strf atom is a BITMAPINFOHEADER struct. This struct is 40 bytes itself,
  * but can have extradata appended at the end after the 40 bytes belonging
@@ -6751,6 +6813,8 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('v','p','c','C'), mov_read_vpcc },
 { MKTAG('m','d','c','v'), mov_read_mdcv },
 { MKTAG('c','l','l','i'), mov_read_clli },
+{ MKTAG('d','v','c','C'), mov_read_dvcc },
+{ MKTAG('d','v','v','C'), mov_read_dvcc },
 { 0, NULL }
 };
 
