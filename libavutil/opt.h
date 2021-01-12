@@ -33,6 +33,7 @@
 #include "log.h"
 #include "pixfmt.h"
 #include "samplefmt.h"
+#include "subtitlefmt.h"
 #include "version.h"
 
 /**
@@ -240,6 +241,7 @@ enum AVOptionType{
     AV_OPT_TYPE_COLOR,
     AV_OPT_TYPE_CHANNEL_LAYOUT,
     AV_OPT_TYPE_BOOL,
+    AV_OPT_TYPE_SUBTITLE_FMT,
 };
 
 /**
@@ -706,6 +708,7 @@ int av_opt_set_bin     (void *obj, const char *name, const uint8_t *val, int siz
 int av_opt_set_image_size(void *obj, const char *name, int w, int h, int search_flags);
 int av_opt_set_pixel_fmt (void *obj, const char *name, enum AVPixelFormat fmt, int search_flags);
 int av_opt_set_sample_fmt(void *obj, const char *name, enum AVSampleFormat fmt, int search_flags);
+int av_opt_set_subtitle_fmt(void *obj, const char *name, enum AVSubtitleFormat fmt, int search_flags);
 int av_opt_set_video_rate(void *obj, const char *name, AVRational val, int search_flags);
 int av_opt_set_channel_layout(void *obj, const char *name, int64_t ch_layout, int search_flags);
 /**
@@ -761,6 +764,7 @@ int av_opt_get_q       (void *obj, const char *name, int search_flags, AVRationa
 int av_opt_get_image_size(void *obj, const char *name, int search_flags, int *w_out, int *h_out);
 int av_opt_get_pixel_fmt (void *obj, const char *name, int search_flags, enum AVPixelFormat *out_fmt);
 int av_opt_get_sample_fmt(void *obj, const char *name, int search_flags, enum AVSampleFormat *out_fmt);
+int av_opt_get_subtitle_fmt(void *obj, const char *name, int search_flags, enum AVSubtitleFormat *out_fmt);
 int av_opt_get_video_rate(void *obj, const char *name, int search_flags, AVRational *out_val);
 int av_opt_get_channel_layout(void *obj, const char *name, int search_flags, int64_t *ch_layout);
 /**

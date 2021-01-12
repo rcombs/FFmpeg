@@ -67,6 +67,9 @@ static int read_number(const AVOption *o, const void *dst, double *num, int *den
     case AV_OPT_TYPE_SAMPLE_FMT:
         *intnum = *(enum AVSampleFormat *)dst;
         return 0;
+    case AV_OPT_TYPE_SUBTITLE_FMT:
+        *intnum = *(enum AVSubtitleFormat *)dst;
+        return 0;
     case AV_OPT_TYPE_BOOL:
     case AV_OPT_TYPE_INT:
         *intnum = *(int *)dst;
@@ -119,6 +122,9 @@ static int write_number(void *obj, const AVOption *o, void *dst, double num, int
         break;
     case AV_OPT_TYPE_SAMPLE_FMT:
         *(enum AVSampleFormat *)dst = llrint(num / den) * intnum;
+        break;
+    case AV_OPT_TYPE_SUBTITLE_FMT:
+        *(enum AVSubtitleFormat *)dst = llrint(num / den) * intnum;
         break;
     case AV_OPT_TYPE_BOOL:
     case AV_OPT_TYPE_FLAGS:
@@ -444,6 +450,12 @@ static int set_string_sample_fmt(void *obj, const AVOption *o, const char *val, 
                           AV_SAMPLE_FMT_NB, av_get_sample_fmt, "sample format");
 }
 
+static int set_string_subtitle_fmt(void *obj, const AVOption *o, const char *val, uint8_t *dst)
+{
+    return set_string_fmt(obj, o, val, dst,
+                          AV_SUBTITLE_FMT_NB, av_get_subtitle_fmt, "subtitle format");
+}
+
 static int set_string_dict(void *obj, const AVOption *o, const char *val, uint8_t **dst)
 {
     AVDictionary *options = NULL;
@@ -471,6 +483,7 @@ int av_opt_set(void *obj, const char *name, const char *val, int search_flags)
         return AVERROR_OPTION_NOT_FOUND;
     if (!val && (o->type != AV_OPT_TYPE_STRING &&
                  o->type != AV_OPT_TYPE_PIXEL_FMT && o->type != AV_OPT_TYPE_SAMPLE_FMT &&
+                 o->type != AV_OPT_TYPE_SUBTITLE_FMT &&
                  o->type != AV_OPT_TYPE_IMAGE_SIZE &&
                  o->type != AV_OPT_TYPE_DURATION && o->type != AV_OPT_TYPE_COLOR &&
                  o->type != AV_OPT_TYPE_CHANNEL_LAYOUT && o->type != AV_OPT_TYPE_BOOL))
@@ -511,6 +524,8 @@ int av_opt_set(void *obj, const char *name, const char *val, int search_flags)
         return set_string_pixel_fmt(obj, o, val, dst);
     case AV_OPT_TYPE_SAMPLE_FMT:
         return set_string_sample_fmt(obj, o, val, dst);
+    case AV_OPT_TYPE_SUBTITLE_FMT:
+        return set_string_subtitle_fmt(obj, o, val, dst);
     case AV_OPT_TYPE_DURATION:
         {
             int64_t usecs = 0;
@@ -706,6 +721,11 @@ int av_opt_set_sample_fmt(void *obj, const char *name, enum AVSampleFormat fmt, 
     return set_format(obj, name, fmt, search_flags, AV_OPT_TYPE_SAMPLE_FMT, "sample", AV_SAMPLE_FMT_NB);
 }
 
+int av_opt_set_subtitle_fmt(void *obj, const char *name, enum AVSubtitleFormat fmt, int search_flags)
+{
+    return set_format(obj, name, fmt, search_flags, AV_OPT_TYPE_SUBTITLE_FMT, "subtitle", AV_SUBTITLE_FMT_NB);
+}
+
 int av_opt_set_channel_layout(void *obj, const char *name, int64_t cl, int search_flags)
 {
     void *target_obj;
@@ -859,6 +879,9 @@ int av_opt_get(void *obj, const char *name, int search_flags, uint8_t **out_val)
     case AV_OPT_TYPE_SAMPLE_FMT:
         ret = snprintf(buf, sizeof(buf), "%s", (char *)av_x_if_null(av_get_sample_fmt_name(*(enum AVSampleFormat *)dst), "none"));
         break;
+    case AV_OPT_TYPE_SUBTITLE_FMT:
+        ret = snprintf(buf, sizeof(buf), "%s", (char *)av_x_if_null(av_get_subtitle_fmt_name(*(enum AVSubtitleFormat *)dst), "none"));
+        break;
     case AV_OPT_TYPE_DURATION:
         i64 = *(int64_t *)dst;
         format_duration(buf, sizeof(buf), i64);
@@ -1009,6 +1032,11 @@ int av_opt_get_pixel_fmt(void *obj, const char *name, int search_flags, enum AVP
 int av_opt_get_sample_fmt(void *obj, const char *name, int search_flags, enum AVSampleFormat *out_fmt)
 {
     return get_format(obj, name, search_flags, out_fmt, AV_OPT_TYPE_SAMPLE_FMT, "sample");
+}
+
+int av_opt_get_subtitle_fmt(void *obj, const char *name, int search_flags, enum AVSubtitleFormat *out_fmt)
+{
+    return get_format(obj, name, search_flags, out_fmt, AV_OPT_TYPE_SUBTITLE_FMT, "subtitle");
 }
 
 int av_opt_get_channel_layout(void *obj, const char *name, int search_flags, int64_t *cl)
@@ -1213,6 +1241,9 @@ static void opt_list(void *obj, void *av_log_obj, const char *unit,
             case AV_OPT_TYPE_SAMPLE_FMT:
                 av_log(av_log_obj, AV_LOG_INFO, "%-12s ", "<sample_fmt>");
                 break;
+            case AV_OPT_TYPE_SUBTITLE_FMT:
+                av_log(av_log_obj, AV_LOG_INFO, "%-12s ", "<subtitle_fmt>");
+                break;
             case AV_OPT_TYPE_DURATION:
                 av_log(av_log_obj, AV_LOG_INFO, "%-12s ", "<duration>");
                 break;
@@ -1323,6 +1354,9 @@ static void opt_list(void *obj, void *av_log_obj, const char *unit,
             case AV_OPT_TYPE_SAMPLE_FMT:
                 av_log(av_log_obj, AV_LOG_INFO, "%s", (char *)av_x_if_null(av_get_sample_fmt_name(opt->default_val.i64), "none"));
                 break;
+            case AV_OPT_TYPE_SUBTITLE_FMT:
+                av_log(av_log_obj, AV_LOG_INFO, "%s", (char *)av_x_if_null(av_get_subtitle_fmt_name(opt->default_val.i64), "none"));
+                break;
             case AV_OPT_TYPE_COLOR:
             case AV_OPT_TYPE_IMAGE_SIZE:
             case AV_OPT_TYPE_STRING:
@@ -1385,6 +1419,7 @@ void av_opt_set_defaults2(void *s, int mask, int flags)
             case AV_OPT_TYPE_CHANNEL_LAYOUT:
             case AV_OPT_TYPE_PIXEL_FMT:
             case AV_OPT_TYPE_SAMPLE_FMT:
+            case AV_OPT_TYPE_SUBTITLE_FMT:
                 write_number(s, opt, dst, 1, 1, opt->default_val.i64);
                 break;
             case AV_OPT_TYPE_DOUBLE:
@@ -1780,6 +1815,8 @@ static int opt_size(enum AVOptionType type)
         return sizeof(enum AVPixelFormat);
     case AV_OPT_TYPE_SAMPLE_FMT:
         return sizeof(enum AVSampleFormat);
+    case AV_OPT_TYPE_SUBTITLE_FMT:
+        return sizeof(enum AVSubtitleFormat);
     case AV_OPT_TYPE_COLOR:
         return 4;
     }
@@ -1894,6 +1931,7 @@ int av_opt_query_ranges_default(AVOptionRanges **ranges_arg, void *obj, const ch
     case AV_OPT_TYPE_UINT64:
     case AV_OPT_TYPE_PIXEL_FMT:
     case AV_OPT_TYPE_SAMPLE_FMT:
+    case AV_OPT_TYPE_SUBTITLE_FMT:
     case AV_OPT_TYPE_FLOAT:
     case AV_OPT_TYPE_DOUBLE:
     case AV_OPT_TYPE_DURATION:
@@ -1977,6 +2015,7 @@ int av_opt_is_set_to_default(void *obj, const AVOption *o)
     case AV_OPT_TYPE_FLAGS:
     case AV_OPT_TYPE_PIXEL_FMT:
     case AV_OPT_TYPE_SAMPLE_FMT:
+    case AV_OPT_TYPE_SUBTITLE_FMT:
     case AV_OPT_TYPE_INT:
     case AV_OPT_TYPE_CHANNEL_LAYOUT:
     case AV_OPT_TYPE_DURATION:
