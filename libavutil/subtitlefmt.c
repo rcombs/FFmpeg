@@ -30,3 +30,13 @@ const char *av_get_subtitle_fmt_name(enum AVSubtitleFormat subtitle_fmt)
         return NULL;
     return subtitle_fmt_names[subtitle_fmt];
 }
+
+enum AVSubtitleFormat av_get_subtitle_fmt(const char *name)
+{
+    int i;
+
+    for (i = 0; i < AV_SUBTITLE_FMT_NB; i++)
+        if (!strcmp(subtitle_fmt_names[i], name))
+            return i;
+    return AV_SUBTITLE_FMT_NONE;
+}

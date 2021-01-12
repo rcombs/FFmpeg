@@ -29,6 +29,16 @@ enum AVSubtitleFormat {
     AV_SUBTITLE_FMT_NB  ///< Number of subtitle formats. DO NOT USE if linking dynamically
 };
 
+/**
+ * Return the name of subtitle_fmt, or NULL if subtitle_fmt is not
+ * recognized.
+ */
 const char *av_get_subtitle_fmt_name(enum AVSubtitleFormat subtitle_fmt);
+
+/**
+ * Return a subtitle format corresponding to name, or AV_SUBTITLE_FMT_NONE
+ * on error.
+ */
+enum AVSubtitleFormat av_get_subtitle_fmt(const char *name);
 
 #endif /* AVUTIL_SUBTITLEFMT_H */
