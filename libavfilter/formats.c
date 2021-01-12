@@ -596,6 +596,12 @@ int ff_set_common_formats(AVFilterContext *ctx, AVFilterFormats *formats)
                        ff_formats_ref, ff_formats_unref);
 }
 
+int ff_set_common_sub_pixfmts(AVFilterContext *ctx, AVFilterFormats *sub_pixfmts)
+{
+    SET_COMMON_FORMATS(ctx, sub_pixfmts,
+                       ff_formats_ref, ff_formats_unref);
+}
+
 int ff_default_query_formats(AVFilterContext *ctx)
 {
     int ret;
@@ -611,6 +617,10 @@ int ff_default_query_formats(AVFilterContext *ctx)
         if (ret < 0)
             return ret;
         ret = ff_set_common_samplerates(ctx, ff_all_samplerates());
+        if (ret < 0)
+            return ret;
+    } else if (type == AVMEDIA_TYPE_SUBTITLE) {
+        ret = ff_set_common_sub_pixfmts(ctx, ff_all_formats(AVMEDIA_TYPE_VIDEO));
         if (ret < 0)
             return ret;
     }
@@ -697,6 +707,11 @@ int ff_formats_check_pixel_formats(void *log, const AVFilterFormats *fmts)
 int ff_formats_check_sample_formats(void *log, const AVFilterFormats *fmts)
 {
     return check_list(log, "sample format", fmts);
+}
+
+int ff_formats_check_subtitle_formats(void *log, const AVFilterFormats *fmts)
+{
+    return check_list(log, "subtitle format", fmts);
 }
 
 int ff_formats_check_sample_rates(void *log, const AVFilterFormats *fmts)

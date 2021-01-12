@@ -331,6 +331,11 @@ static int filter_link_check_formats(void *log, AVFilterLink *link, AVFilterForm
             return ret;
         break;
 
+    case AVMEDIA_TYPE_SUBTITLE:
+        if ((ret = ff_formats_check_subtitle_formats(log, cfg->formats)) < 0)
+            return ret;
+        break;
+
     default:
         av_assert0(!"reached");
     }
@@ -410,6 +415,9 @@ static int formats_declared(AVFilterContext *f)
             !(f->inputs[i]->outcfg.samplerates &&
               f->inputs[i]->outcfg.channel_layouts))
             return 0;
+        if (f->inputs[i]->type == AVMEDIA_TYPE_SUBTITLE &&
+            !f->inputs[i]->outcfg.sub_pixfmts)
+            return 0;
     }
     for (i = 0; i < f->nb_outputs; i++) {
         if (!f->outputs[i]->incfg.formats)
@@ -418,8 +426,19 @@ static int formats_declared(AVFilterContext *f)
             !(f->outputs[i]->incfg.samplerates &&
               f->outputs[i]->incfg.channel_layouts))
             return 0;
+        if (f->outputs[i]->type == AVMEDIA_TYPE_SUBTITLE &&
+            !f->outputs[i]->incfg.sub_pixfmts)
+            return 0;
     }
     return 1;
+}
+
+static int contains_format(const AVFilterFormats* formats, int format)
+{
+    for (int i = 0; i < formats->nb_formats; i++)
+        if (formats->formats[i] == format)
+            return 1;
+    return 0;
 }
 
 /**
@@ -499,6 +518,11 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                                                 link->outcfg.channel_layouts)
                 MERGE_DISPATCH(samplerates, link->incfg.samplerates,
                                             link->outcfg.samplerates)
+            } else if (link->type == AVMEDIA_TYPE_SUBTITLE &&
+                       contains_format(link->incfg.formats, AV_SUBTITLE_FMT_BITMAP) &&
+                       contains_format(link->outcfg.formats, AV_SUBTITLE_FMT_BITMAP)) {
+                MERGE_DISPATCH(formats, link->incfg.sub_pixfmts,
+                                        link->outcfg.sub_pixfmts, AVMEDIA_TYPE_VIDEO)
             }
             MERGE_DISPATCH(formats, link->incfg.formats,
                            link->outcfg.formats, link->type)
@@ -577,6 +601,11 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                     av_assert0( inlink->outcfg.channel_layouts->refcount > 0);
                     av_assert0(outlink-> incfg.channel_layouts->refcount > 0);
                     av_assert0(outlink->outcfg.channel_layouts->refcount > 0);
+                } else if (outlink->type == AVMEDIA_TYPE_SUBTITLE) {
+                    av_assert0( inlink-> incfg.sub_pixfmts->refcount > 0);
+                    av_assert0( inlink->outcfg.sub_pixfmts->refcount > 0);
+                    av_assert0(outlink-> incfg.sub_pixfmts->refcount > 0);
+                    av_assert0(outlink->outcfg.sub_pixfmts->refcount > 0);
                 }
                 if (CHECKED_MERGE(formats, inlink->incfg.formats,
                                   inlink->outcfg.formats, inlink->type)         ||
@@ -591,7 +620,13 @@ static int query_formats(AVFilterGraph *graph, AVClass *log_ctx)
                     (CHECKED_MERGE(samplerates, outlink->incfg.samplerates,
                                                 outlink->outcfg.samplerates) ||
                      CHECKED_MERGE(channel_layouts, outlink->incfg.channel_layouts,
-                                                    outlink->outcfg.channel_layouts))) {
+                                                    outlink->outcfg.channel_layouts)) ||
+                    outlink->type == AVMEDIA_TYPE_SUBTITLE &&
+                    CHECKED_MERGE(formats, inlink->incfg.sub_pixfmts,
+                                           inlink->outcfg.sub_pixfmts, AVMEDIA_TYPE_VIDEO) ||
+                    outlink->type == AVMEDIA_TYPE_SUBTITLE &&
+                    CHECKED_MERGE(formats, outlink->incfg.sub_pixfmts,
+                                           outlink->outcfg.sub_pixfmts, AVMEDIA_TYPE_VIDEO)) {
                     if (ret < 0)
                         return ret;
                     av_log(log_ctx, AV_LOG_ERROR,
@@ -677,8 +712,8 @@ static int get_sub_fmt_loss_score(enum AVSubtitleFormat dst_fmt, enum AVSubtitle
     return 1;
 }
 
-static enum AVSampleFormat find_best_subtitle_fmt_of_2(enum AVSubtitleFormat dst_fmt1, enum AVSubtitleFormat dst_fmt2,
-                                                       enum AVSubtitleFormat src_fmt)
+static enum AVSubtitleFormat find_best_subtitle_fmt_of_2(enum AVSubtitleFormat dst_fmt1, enum AVSubtitleFormat dst_fmt2,
+                                                         enum AVSubtitleFormat src_fmt)
 {
     const int score1 = get_sub_fmt_loss_score(dst_fmt1, src_fmt);
     const int score2 = get_sub_fmt_loss_score(dst_fmt2, src_fmt);
@@ -722,14 +757,14 @@ static int pick_format(AVFilterLink *link, AVFilterLink *ref)
         if (ref && ref->type == AVMEDIA_TYPE_SUBTITLE) {
             enum AVSubtitleFormat best = AV_SUBTITLE_FMT_NONE;
             int i;
-            for (i = 0; i < link->in_formats->nb_formats; i++) {
-                enum AVSampleFormat p = link->in_formats->formats[i];
+            for (i = 0; i < link->incfg.formats->nb_formats; i++) {
+                enum AVSubtitleFormat p = link->incfg.formats->formats[i];
                 best = find_best_subtitle_fmt_of_2(best, p, ref->format);
             }
             av_log(link->src, AV_LOG_DEBUG, "picking %s out of %d ref:%s\n",
-                   av_get_subtitle_fmt_name(best), link->in_formats->nb_formats,
+                   av_get_subtitle_fmt_name(best), link->incfg.formats->nb_formats,
                    av_get_subtitle_fmt_name(ref->format));
-            link->in_formats->formats[0] = best;
+            link->incfg.formats->formats[0] = best;
         }
     }
 
@@ -763,6 +798,17 @@ static int pick_format(AVFilterLink *link, AVFilterLink *ref)
             link->channel_layout = 0;
         else
             link->channels = av_get_channel_layout_nb_channels(link->channel_layout);
+    } else if (link->type == AVMEDIA_TYPE_SUBTITLE) {
+        if (link->format == AV_SUBTITLE_FMT_BITMAP) {
+            if (!link->incfg.sub_pixfmts->nb_formats) {
+                av_log(link->src, AV_LOG_ERROR, "Cannot select sub pixel format for"
+                       " the link between filters %s and %s.\n", link->src->name,
+                       link->dst->name);
+                return AVERROR(EINVAL);
+            }
+            link->incfg.sub_pixfmts->nb_formats = 1;
+            link->sub_pixfmt = link->incfg.sub_pixfmts->formats[0];
+        }
     }
 
     ff_formats_unref(&link->incfg.formats);
@@ -771,6 +817,8 @@ static int pick_format(AVFilterLink *link, AVFilterLink *ref)
     ff_formats_unref(&link->outcfg.samplerates);
     ff_channel_layouts_unref(&link->incfg.channel_layouts);
     ff_channel_layouts_unref(&link->outcfg.channel_layouts);
+    ff_formats_unref(&link->incfg.sub_pixfmts);
+    ff_formats_unref(&link->outcfg.sub_pixfmts);
 
     return 0;
 }

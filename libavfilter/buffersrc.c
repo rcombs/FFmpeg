@@ -67,6 +67,7 @@ typedef struct BufferSourceContext {
 
     /* subtitle only */
     enum AVSubtitleFormat subtitle_fmt;
+    enum AVPixelFormat sub_pixfmt;
 
     int eof;
 } BufferSourceContext;
@@ -310,9 +311,8 @@ AVFILTER_DEFINE_CLASS(abuffer);
 
 static const AVOption sbuffer_options[] = {
     { "time_base",      NULL, OFFSET(time_base),  AV_OPT_TYPE_RATIONAL, { .dbl = 0 }, 0, INT_MAX, S },
-    { "subtitle_fmt",   NULL, OFFSET(subtitle_fmt), AV_OPT_TYPE_INT, { .i64 = AV_SUBTITLE_FMT_NONE }, .min = AV_SUBTITLE_FMT_NONE, .max = INT_MAX, .flags = S, "format" },
-        { "bitmap",      NULL, 0, AV_OPT_TYPE_CONST, {.i64=AV_SUBTITLE_FMT_BITMAP}, INT_MIN, INT_MAX, S, "format" },
-        { "text",        NULL, 0, AV_OPT_TYPE_CONST, {.i64=AV_SUBTITLE_FMT_TEXT},   INT_MIN, INT_MAX, S, "format" },
+    { "subtitle_fmt",   NULL, OFFSET(subtitle_fmt), AV_OPT_TYPE_SUBTITLE_FMT, { .i64 = AV_SUBTITLE_FMT_NONE }, .min = AV_SUBTITLE_FMT_NONE, .max = INT_MAX, .flags = S },
+    { "sub_pixfmt",     NULL, OFFSET(sub_pixfmt), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, .min = AV_PIX_FMT_NONE, .max = INT_MAX, .flags = S },
     { NULL }
 };
 
@@ -379,6 +379,7 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterChannelLayouts *channel_layouts = NULL;
     AVFilterFormats *formats = NULL;
     AVFilterFormats *samplerates = NULL;
+    AVFilterFormats *sub_pixfmts = NULL;
     int ret;
 
     switch (ctx->outputs[0]->type) {
@@ -402,9 +403,13 @@ static int query_formats(AVFilterContext *ctx)
             return ret;
         break;
     case AVMEDIA_TYPE_SUBTITLE:
-        av_log(0,0,"query format with sub fmt %s\n", av_get_subtitle_fmt_name(c->subtitle_fmt));
-        if ((ret = ff_add_format         (&formats, c->subtitle_fmt)) < 0 ||
-            (ret = ff_set_common_formats (ctx     , formats        )) < 0)
+        av_log(0,0,"query format with sub fmt %s, pix %s\n", av_get_subtitle_fmt_name(c->subtitle_fmt), av_get_pix_fmt_name(c->sub_pixfmt));
+        if ((ret = ff_add_format             (&formats    , c->subtitle_fmt)) < 0 ||
+            (ret = ff_set_common_formats     (ctx         , formats        )) < 0 ||
+            (c->sub_pixfmt != AV_PIX_FMT_NONE ?
+             (ret = ff_add_format            (&sub_pixfmts, c->sub_pixfmt)) :
+             (ret = ((sub_pixfmts = av_mallocz(sizeof(AVFilterFormats))) ? 0 : AVERROR(ENOMEM)))) < 0 ||
+            (ret = ff_set_common_sub_pixfmts (ctx         , sub_pixfmts    )) < 0)
             return ret;
         break;
     default:

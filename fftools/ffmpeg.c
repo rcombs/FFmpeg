@@ -229,6 +229,8 @@ static void sub2video_push_ref(InputStream *ist, int64_t pts)
     av_assert1(frame->data[0]);
     ist->sub2video.last_pts = frame->pts = pts;
     for (i = 0; i < ist->nb_filters; i++) {
+        if (ist->filters[i]->filter->outputs[0]->type != AVMEDIA_TYPE_VIDEO)
+            continue;
         ret = av_buffersrc_add_frame_flags(ist->filters[i]->filter, frame,
                                            AV_BUFFERSRC_FLAG_KEEP_REF |
                                            AV_BUFFERSRC_FLAG_PUSH);
@@ -303,8 +305,11 @@ static void sub2video_heartbeat(InputStream *ist, int64_t pts)
                or if we need to initialize the system, update the
                overlayed subpicture and its start/end times */
             sub2video_update(ist2, pts2 + 1, NULL);
-        for (j = 0, nb_reqs = 0; j < ist2->nb_filters; j++)
+        for (j = 0, nb_reqs = 0; j < ist2->nb_filters; j++) {
+            if (ist2->filters[j]->filter->outputs[0]->type != AVMEDIA_TYPE_VIDEO)
+                continue;
             nb_reqs += av_buffersrc_get_nb_failed_requests(ist2->filters[j]->filter);
+        }
         if (nb_reqs)
             sub2video_push_ref(ist2, pts2);
     }
@@ -1076,7 +1081,11 @@ static void do_subtitle_out(OutputFile *of,
     AVPacket *pkt = ost->pkt;
     int ret;
 
+    init_output_stream_wrapper(ost, frame, 1);
+
     av_packet_unref(pkt);
+
+    adjust_frame_pts_to_encoder_tb(of, ost, frame);
 
     if (!check_recording_time(ost))
         return;
@@ -1094,7 +1103,9 @@ static void do_subtitle_out(OutputFile *of,
     av_log(0,0,"ENCODE FRAME PKT PTS=%"PRId64"\n", frame->pts);
     av_log(0,0,"ENCODE FRAME PKT DURATION=%"PRId64"\n", frame->pkt_duration);
 
+    av_log(0,0,">>> avcodec_send_frame()\n");
     ret = avcodec_send_frame(enc, frame);
+    av_log(0,0,"<<< avcodec_send_frame() = %s\n", av_err2str(ret));
     if (ret < 0)
         goto error;
 
@@ -3773,7 +3784,7 @@ static int transcode_init(void)
         }
 
     /*
-     * initialize stream copy and subtitle/data streams.
+     * initialize stream copy and data streams.
      * Encoded AVFrame based streams will get initialized as follows:
      * - when the first AVFrame is received in do_video_out
      * - just before the first AVFrame is received in either transcode_step
@@ -3784,7 +3795,8 @@ static int transcode_init(void)
     for (i = 0; i < nb_output_streams; i++) {
         if (!output_streams[i]->stream_copy &&
             (output_streams[i]->enc_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
-             output_streams[i]->enc_ctx->codec_type == AVMEDIA_TYPE_AUDIO))
+             output_streams[i]->enc_ctx->codec_type == AVMEDIA_TYPE_AUDIO ||
+             output_streams[i]->enc_ctx->codec_type == AVMEDIA_TYPE_SUBTITLE))
             continue;
 
         ret = init_output_stream_wrapper(output_streams[i], NULL, 0);

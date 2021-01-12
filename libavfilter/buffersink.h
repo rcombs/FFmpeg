@@ -47,7 +47,8 @@
  * - av_buffersink_get_sample_aspect_ratio(),
  * - av_buffersink_get_channels(),
  * - av_buffersink_get_channel_layout(),
- * - av_buffersink_get_sample_rate().
+ * - av_buffersink_get_sample_rate(),
+ * - av_buffersink_get_sub_pixfmt().
  *
  * The format can be constrained by setting options, using av_opt_set() and
  * related functions with the AV_OPT_SEARCH_CHILDREN flag.
@@ -158,6 +159,8 @@ AVRational       av_buffersink_get_sample_aspect_ratio (const AVFilterContext *c
 int              av_buffersink_get_channels            (const AVFilterContext *ctx);
 uint64_t         av_buffersink_get_channel_layout      (const AVFilterContext *ctx);
 int              av_buffersink_get_sample_rate         (const AVFilterContext *ctx);
+
+enum AVPixelFormat av_buffersink_get_sub_pixfmt          (const AVFilterContext *ctx);
 
 AVBufferRef *    av_buffersink_get_hw_frames_ctx       (const AVFilterContext *ctx);
 

@@ -222,6 +222,8 @@ MAKE_AVFILTERLINK_ACCESSOR(int              , channels           )
 MAKE_AVFILTERLINK_ACCESSOR(uint64_t         , channel_layout     )
 MAKE_AVFILTERLINK_ACCESSOR(int              , sample_rate        )
 
+MAKE_AVFILTERLINK_ACCESSOR(enum AVPixelFormat, sub_pixfmt        )
+
 MAKE_AVFILTERLINK_ACCESSOR(AVBufferRef *    , hw_frames_ctx      )
 
 #define CHECK_LIST_SIZE(field) \

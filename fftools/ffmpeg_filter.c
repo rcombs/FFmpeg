@@ -1010,6 +1010,9 @@ static int configure_input_subtitle_filter(FilterGraph *fg, InputFilter *ifilter
            ifilter->format, av_get_subtitle_fmt_name(ifilter->format));
     av_bprintf(&args, "time_base=%d/%d:subtitle_fmt=%s",
                tb.num, tb.den, av_get_subtitle_fmt_name(ifilter->format));
+    if (ifilter->sub_pixfmt != AV_PIX_FMT_NONE)
+        av_bprintf(&args, ":sub_pixfmt=%s", av_get_pix_fmt_name(ifilter->sub_pixfmt));
+
 
     snprintf(name, sizeof(name), "graph %d input from stream %d:%d", fg->index,
              ist->file_index, ist->st->index);

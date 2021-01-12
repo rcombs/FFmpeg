@@ -454,6 +454,11 @@ typedef struct AVFilterFormatsConfig {
      */
     AVFilterChannelLayouts  *channel_layouts;
 
+    /**
+     * List of supported subtitle pixel formats, only for bitmap subtitles.
+     */
+    AVFilterFormats *sub_pixfmts;
+
 } AVFilterFormatsConfig;
 
 /**

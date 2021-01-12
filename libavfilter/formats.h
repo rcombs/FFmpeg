@@ -184,6 +184,9 @@ int ff_set_common_formats(AVFilterContext *ctx, AVFilterFormats *formats);
 av_warn_unused_result
 int ff_add_channel_layout(AVFilterChannelLayouts **l, uint64_t channel_layout);
 
+av_warn_unused_result
+int ff_set_common_sub_pixfmts(AVFilterContext *ctx, AVFilterFormats *formats);
+
 /**
  * Add *ref as a new reference to f.
  */
@@ -304,6 +307,13 @@ int ff_formats_check_pixel_formats(void *log, const AVFilterFormats *fmts);
  * In particular, check for duplicates.
  */
 int ff_formats_check_sample_formats(void *log, const AVFilterFormats *fmts);
+
+/**
+ * Check that fmts is a valid subtitle formats list.
+ *
+ * In particular, check for duplicates.
+ */
+int ff_formats_check_subtitle_formats(void *log, const AVFilterFormats *fmts);
 
 /**
  * Check that fmts is a valid sample rates list.

@@ -68,6 +68,9 @@ typedef struct TrimContext {
     int64_t next_pts;
 
     int eof;
+
+    int drop_overlapping_start;
+    int trim_start, trim_end;
 } TrimContext;
 
 static av_cold int init(AVFilterContext *ctx)
@@ -389,11 +392,13 @@ static int strim_filter_frame(AVFilterLink *inlink, AVFrame *frame)
     // XXX: make sure to pick overlapping subtitles and adjust the starting pts
 
     if (s->start_frame >= 0 || s->start_pts != AV_NOPTS_VALUE) {
+        int64_t cmp_ts = s->drop_overlapping_start ? frame->sub_start_display
+                                                   : frame->sub_end_display;
         drop = 1;
         if (s->start_frame >= 0 && s->nb_frames >= s->start_frame)
             drop = 0;
         if (s->start_pts != AV_NOPTS_VALUE && frame->pts != AV_NOPTS_VALUE &&
-            frame->pts >= s->start_pts)
+            av_compare_ts(frame->pts - s->start_pts, inlink->time_base, -cmp_ts, AV_TIME_BASE_Q) >= 0)
             drop = 0;
         if (drop)
             goto drop;
@@ -438,6 +443,14 @@ static const AVOption strim_options[] = {
         "to the output",                                                 OFFSET(start_frame), AV_OPT_TYPE_INT64,  { .i64 = -1 },       -1, INT64_MAX, FLAGS },
     { "end_frame",   "Number of the first frame that should be dropped "
         "again",                                                         OFFSET(end_frame),   AV_OPT_TYPE_INT64,  { .i64 = INT64_MAX }, 0, INT64_MAX, FLAGS },
+    { "drop_overlapping_start", "Whether to drop frames overlapping the start",
+                                                                         OFFSET(drop_overlapping_start), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+/*
+    { "trim_start", "Whether to trim timestamps on frames overlapping the start",
+                                                                         OFFSET(trim_start), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "trim_end", "Whether to trim durations on frames overlapping the end",
+                                                                         OFFSET(trim_end), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+*/
     { NULL }
 };
 #undef FLAGS
