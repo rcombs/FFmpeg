@@ -52,6 +52,19 @@ struct qp_properties {
     int type;
 };
 
+static void frame_guess_type(AVFrame *f)
+{
+    if (f->type != AVMEDIA_TYPE_UNKNOWN)
+        return;
+
+    if (f->sub_nb_rects)
+        f->type = AVMEDIA_TYPE_SUBTITLE;
+    else if (f->width > 0 && f->height > 0)
+        f->type = AVMEDIA_TYPE_VIDEO;
+    else if (f->nb_samples > 0 && (f->channel_layout || f->channels > 0))
+        f->type = AVMEDIA_TYPE_AUDIO;
+}
+
 int av_frame_set_qp_table(AVFrame *f, AVBufferRef *buf, int stride, int qp_type)
 {
     struct qp_properties *p;
@@ -165,6 +178,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     frame->color_range         = AVCOL_RANGE_UNSPECIFIED;
     frame->chroma_location     = AVCHROMA_LOC_UNSPECIFIED;
     frame->flags               = 0;
+    frame->type                = AVMEDIA_TYPE_UNKNOWN;
     frame->sub_pixfmt          = AV_PIX_FMT_NONE;
 }
 
@@ -353,28 +367,31 @@ static int get_subtitle_buffer(AVFrame *frame)
 {
     int i, ret;
 
-    ret = get_data_buffer(frame, frame->sub_nb_rects, sizeof(AVFrameSubtitleRectangle));
+    ret = get_data_buffer(frame, FFMAX(frame->sub_nb_rects, 1), sizeof(AVFrameSubtitleRectangle));
     if (ret < 0)
         return ret;
-    for (i = 0; i < frame->sub_nb_rects; i++)
+    for (i = 0; i < FFMAX(frame->sub_nb_rects, 1); i++)
         memset(frame->extended_data[i], 0, sizeof(AVFrameSubtitleRectangle));
     return 0;
 }
 
 int av_frame_get_buffer(AVFrame *frame, int align)
 {
-    if (frame->sub_nb_rects)
-        return get_subtitle_buffer(frame);
-
     if (frame->format < 0)
         return AVERROR(EINVAL);
 
-    if (frame->width > 0 && frame->height > 0)
-        return get_video_buffer(frame, align);
-    else if (frame->nb_samples > 0 && (frame->channel_layout || frame->channels > 0))
-        return get_audio_buffer(frame, align);
+    frame_guess_type(frame);
 
-    return AVERROR(EINVAL);
+    switch (frame->type) {
+    case AVMEDIA_TYPE_VIDEO:
+        return get_video_buffer(frame, align);
+    case AVMEDIA_TYPE_AUDIO:
+        return get_audio_buffer(frame, align);
+    case AVMEDIA_TYPE_SUBTITLE:
+        return get_subtitle_buffer(frame);
+    default:
+        return AVERROR(EINVAL);
+    }
 }
 
 static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
@@ -419,6 +436,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
     dst->sub_pixfmt             = src->sub_pixfmt;
     dst->sub_start_display      = src->sub_start_display;
     dst->sub_end_display        = src->sub_end_display;
+    dst->type                   = src->type;
 
     av_dict_copy(&dst->metadata, src->metadata, 0);
 
@@ -875,17 +893,21 @@ static int frame_copy_subtitle(AVFrame *dst, const AVFrame *src)
 
 int av_frame_copy(AVFrame *dst, const AVFrame *src)
 {
-    if (dst->format != src->format || (dst->format < 0 && !dst->sub_nb_rects))
+    if (dst->format != src->format || dst->format < 0)
         return AVERROR(EINVAL);
 
-    if (dst->sub_nb_rects)
-        return frame_copy_subtitle(dst, src);
-    if (dst->width > 0 && dst->height > 0)
-        return frame_copy_video(dst, src);
-    else if (dst->nb_samples > 0 && dst->channels > 0)
-        return frame_copy_audio(dst, src);
+    frame_guess_type(dst);
 
-    return AVERROR(EINVAL);
+    switch (dst->type) {
+    case AVMEDIA_TYPE_VIDEO:
+        return frame_copy_video(dst, src);
+    case AVMEDIA_TYPE_AUDIO:
+        return frame_copy_audio(dst, src);
+    case AVMEDIA_TYPE_SUBTITLE:
+        return frame_copy_subtitle(dst, src);
+    default:
+        return AVERROR(EINVAL);
+    }
 }
 
 void av_frame_remove_side_data(AVFrame *frame, enum AVFrameSideDataType type)

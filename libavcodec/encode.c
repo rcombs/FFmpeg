@@ -204,7 +204,7 @@ FF_DISABLE_DEPRECATION_WARNINGS
     /* Craft an AVSubtitle from the AVFrame */
     subtitle.format = frame->format == AV_SUBTITLE_FMT_BITMAP ? 0 : 1;
     subtitle.rects  = av_mallocz_array(frame->sub_nb_rects, sizeof(*subtitle.rects));
-    if (!subtitle.rects)
+    if (!subtitle.rects && frame->sub_nb_rects)
         return AVERROR(ENOMEM);
     subtitle.num_rects = frame->sub_nb_rects;
     subtitle.pts = frame->pts;

@@ -718,6 +718,8 @@ typedef struct AVFrame {
      */
     AVBufferRef *private_ref;
 
+    enum AVMediaType type;
+
     /**
      * Bitmap subtitle format for the rectangles if format is
      * AV_SUBTITLE_FMT_BITMAP.

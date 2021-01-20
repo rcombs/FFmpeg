@@ -37,6 +37,7 @@ AVFrame *ff_default_get_subtitle_buffer(AVFilterLink *link, int nb_rects)
 
     frame->sub_nb_rects = nb_rects;
     frame->format       = link->format;
+    frame->type         = AVMEDIA_TYPE_SUBTITLE;
     ret = av_frame_get_buffer(frame, 0);
     if (ret < 0) {
         av_frame_free(&frame);

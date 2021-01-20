@@ -428,6 +428,8 @@ void av_vlog(void* avcl, int level, const char *fmt, va_list vl)
     if (avc && avc->version >= (50 << 16 | 15 << 8 | 2) &&
         avc->log_level_offset_offset && level >= AV_LOG_FATAL)
         level += *(int *) (((uint8_t *) avcl) + avc->log_level_offset_offset);
+    if (level == 0)
+        return;
     if (log_callback)
         log_callback(avcl, level, fmt, vl);
 }

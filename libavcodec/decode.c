@@ -369,7 +369,7 @@ static inline int decode_simple_internal(AVCodecContext *avctx, AVFrame *frame, 
                 frame->sub_nb_rects          = sub.num_rects;
                 frame->sub_start_display     = av_rescale_q(sub.start_display_time, av_make_q(1, 1000), AV_TIME_BASE_Q);
                 frame->sub_end_display       = av_rescale_q(sub.end_display_time,   av_make_q(1, 1000), AV_TIME_BASE_Q);
-
+                frame->type                  = AVMEDIA_TYPE_SUBTITLE;
 
                 av_log(0,0,"DECODE FRAME PKT PTS=%"PRId64"\n", frame->pts);
                 av_log(0,0,"DECODE FRAME PKT DURATION=%"PRId64"\n", frame->pkt_duration);
@@ -391,7 +391,7 @@ static inline int decode_simple_internal(AVCodecContext *avctx, AVFrame *frame, 
 
                 /* Allocate sub_nb_rects AVFrameSubtitleRectangle */
                 ret_get_buffer = av_frame_get_buffer(frame, 0);
-                //av_log(0,0,"ret_get_buffer=%d. %d rects\n", ret_get_buffer, sub.num_rects);
+                av_log(0,0,"ret_get_buffer=%d. %d rects\n", ret_get_buffer, sub.num_rects);
                 if (ret_get_buffer < 0) {
                     ret = ret_get_buffer;
                 } else {
